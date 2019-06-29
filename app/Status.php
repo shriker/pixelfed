@@ -2,15 +2,22 @@
 
 namespace App;
 
-use Auth, Cache;
-use App\Http\Controllers\StatusController;
+use Auth, Cache, Hashids, Storage;
 use Illuminate\Database\Eloquent\Model;
+use Pixelfed\Snowflake\HasSnowflakePrimary;
+use App\Http\Controllers\StatusController;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Storage;
 
 class Status extends Model
 {
-    use SoftDeletes;
+    use HasSnowflakePrimary, SoftDeletes;
+
+    /**
+     * Indicates if the IDs are auto-incrementing.
+     *
+     * @var bool
+     */
+    public $incrementing = false;
 
     /**
      * The attributes that should be mutated to dates.
@@ -33,8 +40,15 @@ class Status extends Model
         'story',
         'story:reply',
         'story:reaction',
-        'story:live'
+        'story:live',
+        'loop'
     ];
+
+    const MAX_MENTIONS = 5;
+
+    const MAX_HASHTAGS = 30;
+
+    const MAX_LINKS = 2;
 
     public function profile()
     {
@@ -51,7 +65,6 @@ class Status extends Model
         return $this->hasMany(Media::class)->orderBy('order', 'asc')->first();
     }
 
-    // todo: deprecate after 0.6.0
     public function viewType()
     {
         if($this->type) {
@@ -60,7 +73,6 @@ class Status extends Model
         return $this->setType();
     }
 
-    // todo: deprecate after 0.6.0
     public function setType()
     {
         if(in_array($this->type, self::STATUS_TYPES)) {
@@ -77,11 +89,11 @@ class Status extends Model
 
     public function thumb($showNsfw = false)
     {
-        return Cache::remember('status:thumb:'.$this->id, 40320, function() use ($showNsfw) {
+        return Cache::remember('status:thumb:'.$this->id, now()->addMinutes(15), function() use ($showNsfw) {
             $type = $this->type ?? $this->setType();
             $is_nsfw = !$showNsfw ? $this->is_nsfw : false;
-            if ($this->media->count() == 0 || $is_nsfw || !in_array($type,['photo', 'photo:album'])) {
-                return 'data:image/gif;base64,R0lGODlhAQABAIAAAMLCwgAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==';
+            if ($this->media->count() == 0 || $is_nsfw || !in_array($type,['photo', 'photo:album', 'video'])) {
+                return url(Storage::url('public/no-preview.png'));
             }
 
             return url(Storage::url($this->firstMedia()->thumbnail_path));
@@ -92,11 +104,12 @@ class Status extends Model
     {
         if($this->uri) {
             return $this->uri;
+        } else {
+            $id = $this->id;
+            $username = $this->profile->username;
+            $path = url(config('app.url')."/p/{$username}/{$id}");
+            return $path;
         }
-        $id = $this->id;
-        $username = $this->profile->username;
-        $path = url(config('app.url')."/p/{$username}/{$id}");
-        return $path;
     }
 
     public function permalink($suffix = '/activity')
@@ -118,7 +131,11 @@ class Status extends Model
         $media = $this->firstMedia();
         $path = $media->media_path;
         $hash = is_null($media->processed_at) ? md5('unprocessed') : md5($media->created_at);
-        $url = Storage::url($path)."?v={$hash}";
+        if(config('pixelfed.cloud_storage') == true) {
+            $url = Storage::disk(config('filesystems.cloud'))->url($path)."?v={$hash}";
+        } else {
+            $url = Storage::url($path)."?v={$hash}";
+        }
 
         return url($url);
     }
@@ -133,8 +150,12 @@ class Status extends Model
         if(Auth::check() == false) {
             return false;
         }
-        $profile = Auth::user()->profile;
-        return Like::whereProfileId($profile->id)->whereStatusId($this->id)->count();
+        $user = Auth::user();
+        $id = $this->id;
+        return Cache::remember('status:'.$this->id.':likedby:userid:'.$user->id, now()->addHours(30), function() use($user, $id) {
+            $profile = $user->profile;
+            return Like::whereProfileId($profile->id)->whereStatusId($id)->count();
+        });
     }
 
     public function likedBy()
@@ -174,9 +195,12 @@ class Status extends Model
         if(Auth::check() == false) {
             return false;
         }
-        $profile = Auth::user()->profile;
-
-        return self::whereProfileId($profile->id)->whereReblogOfId($this->id)->count();
+        $user = Auth::user();
+        $id = $this->id;
+        return Cache::remember('status:'.$this->id.':sharedby:userid:'.$user->id, now()->addHours(30), function() use($user, $id) {
+            $profile = $user->profile;
+            return self::whereProfileId($profile->id)->whereReblogOfId($id)->count();
+        });
     }
 
     public function sharedBy()
@@ -196,6 +220,8 @@ class Status extends Model
         $parent = $this->in_reply_to_id ?? $this->reblog_of_id;
         if (!empty($parent)) {
             return $this->findOrFail($parent);
+        } else {
+            return false;
         }
     }
 
@@ -268,6 +294,22 @@ class Status extends Model
 
         return "<a href='{$actorUrl}' class='profile-link'>{$actorName}</a> ".
           __('notification.commented');
+    }
+
+    public function shareToText()
+    {
+        $actorName = $this->profile->username;
+
+        return "{$actorName} ".__('notification.shared');
+    }
+
+    public function shareToHtml()
+    {
+        $actorName = $this->profile->username;
+        $actorUrl = $this->profile->url();
+
+        return "<a href='{$actorUrl}' class='profile-link'>{$actorName}</a> ".
+          __('notification.shared');
     }
 
     public function recentComments()

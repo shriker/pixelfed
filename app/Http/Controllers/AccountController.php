@@ -33,27 +33,7 @@ class AccountController extends Controller
 
     public function notifications(Request $request)
     {
-        $this->validate($request, [
-          'page' => 'nullable|min:1|max:3',
-          'a'    => 'nullable|alpha_dash',
-      ]);
-        $profile = Auth::user()->profile;
-        $action = $request->input('a');
-        $timeago = Carbon::now()->subMonths(6);
-        if ($action && in_array($action, ['comment', 'follow', 'mention'])) {
-            $notifications = Notification::whereProfileId($profile->id)
-            ->whereAction($action)
-            ->whereDate('created_at', '>', $timeago)
-            ->orderBy('id', 'desc')
-            ->simplePaginate(30);
-        } else {
-            $notifications = Notification::whereProfileId($profile->id)
-            ->whereDate('created_at', '>', $timeago)
-            ->orderBy('id', 'desc')
-            ->simplePaginate(30);
-        }
-
-        return view('account.activity', compact('profile', 'notifications'));
+        return view('account.activity');
     }
 
     public function followingActivity(Request $request)
@@ -85,21 +65,18 @@ class AccountController extends Controller
 
     public function sendVerifyEmail(Request $request)
     {
-        $timeLimit = Carbon::now()->subDays(1)->toDateTimeString();
         $recentAttempt = EmailVerification::whereUserId(Auth::id())
-          ->where('created_at', '>', $timeLimit)->count();
-        $exists = EmailVerification::whereUserId(Auth::id())->count();
+          ->whereDate('created_at', '>', now()->subHours(12))->count();
 
-        if ($recentAttempt == 1 && $exists == 1) {
+        if ($recentAttempt > 0) {
             return redirect()->back()->with('error', 'A verification email has already been sent recently. Please check your email, or try again later.');
-        } elseif ($recentAttempt == 0 && $exists !== 0) {
-            // Delete old verification and send new one.
-            EmailVerification::whereUserId(Auth::id())->delete();
-        }
+        } 
+
+        EmailVerification::whereUserId(Auth::id())->delete();
 
         $user = User::whereNull('email_verified_at')->find(Auth::id());
-        $utoken = hash('sha512', $user->id);
-        $rtoken = str_random(40);
+        $utoken = str_random(40);
+        $rtoken = str_random(128);
 
         $verify = new EmailVerification();
         $verify->user_id = $user->id;
@@ -119,16 +96,20 @@ class AccountController extends Controller
           ->where('random_token', $randomToken)
           ->firstOrFail();
 
-        if (Auth::id() === $verify->user_id) {
+        if (Auth::id() === $verify->user_id &&
+          $verify->user_token === $userToken &&
+          $verify->random_token === $randomToken) {
             $user = User::find(Auth::id());
             $user->email_verified_at = Carbon::now();
             $user->save();
 
             return redirect('/');
+        } else {
+            abort(403);
         }
     }
 
-    public function fetchNotifications($id)
+    public function fetchNotifications(int $id)
     {
         $key = config('cache.prefix').":user.{$id}.notifications";
         $redis = Redis::connection();
@@ -159,6 +140,11 @@ class AccountController extends Controller
         return view('account.messages');
     }
 
+    public function direct()
+    {
+        return view('account.direct');
+    }
+
     public function showMessage(Request $request, $id)
     {
         return view('account.message');
@@ -167,14 +153,14 @@ class AccountController extends Controller
     public function mute(Request $request)
     {
         $this->validate($request, [
-          'type' => 'required|string',
+          'type' => 'required|alpha_dash',
           'item' => 'required|integer|min:1',
         ]);
 
         $user = Auth::user()->profile;
         $type = $request->input('type');
         $item = $request->input('item');
-        $action = "{$type}.mute";
+        $action = $type . '.mute';
 
         if (!in_array($action, $this->filters)) {
             return abort(406);
@@ -205,23 +191,77 @@ class AccountController extends Controller
 
         $pid = $user->id;
         Cache::forget("user:filter:list:$pid");
-        Cache::forget("feature:discover:people:$pid");
         Cache::forget("feature:discover:posts:$pid");
+        Cache::forget("api:local:exp:rec:$pid");
 
         return redirect()->back();
     }
 
-    public function block(Request $request)
+    public function unmute(Request $request)
     {
         $this->validate($request, [
-          'type' => 'required|string',
+          'type' => 'required|alpha_dash',
           'item' => 'required|integer|min:1',
         ]);
 
         $user = Auth::user()->profile;
         $type = $request->input('type');
         $item = $request->input('item');
-        $action = "{$type}.block";
+        $action = $type . '.mute';
+
+        if (!in_array($action, $this->filters)) {
+            return abort(406);
+        }
+        $filterable = [];
+        switch ($type) {
+          case 'user':
+            $profile = Profile::findOrFail($item);
+            if ($profile->id == $user->id) {
+                return abort(403);
+            }
+            $class = get_class($profile);
+            $filterable['id'] = $profile->id;
+            $filterable['type'] = $class;
+            break;
+
+          default:
+            abort(400);
+            break;
+        }
+
+        $filter = UserFilter::whereUserId($user->id)
+            ->whereFilterableId($filterable['id'])
+            ->whereFilterableType($filterable['type'])
+            ->whereFilterType('mute')
+            ->first();
+
+        if($filter) {
+            $filter->delete();
+        }
+
+        $pid = $user->id;
+        Cache::forget("user:filter:list:$pid");
+        Cache::forget("feature:discover:posts:$pid");
+        Cache::forget("api:local:exp:rec:$pid");
+
+        if($request->wantsJson()) {
+            return response()->json([200]);
+        } else {
+            return redirect()->back();
+        }
+    }
+
+    public function block(Request $request)
+    {
+        $this->validate($request, [
+          'type' => 'required|alpha_dash',
+          'item' => 'required|integer|min:1',
+        ]);
+
+        $user = Auth::user()->profile;
+        $type = $request->input('type');
+        $item = $request->input('item');
+        $action = $type.'.block';
         if (!in_array($action, $this->filters)) {
             return abort(406);
         }
@@ -254,8 +294,60 @@ class AccountController extends Controller
 
         $pid = $user->id;
         Cache::forget("user:filter:list:$pid");
-        Cache::forget("feature:discover:people:$pid");
         Cache::forget("feature:discover:posts:$pid");
+        Cache::forget("api:local:exp:rec:$pid");
+
+        return redirect()->back();
+    }
+
+
+    public function unblock(Request $request)
+    {
+        $this->validate($request, [
+          'type' => 'required|alpha_dash',
+          'item' => 'required|integer|min:1',
+        ]);
+
+        $user = Auth::user()->profile;
+        $type = $request->input('type');
+        $item = $request->input('item');
+        $action = $type . '.block';
+        if (!in_array($action, $this->filters)) {
+            return abort(406);
+        }
+        $filterable = [];
+        switch ($type) {
+          case 'user':
+            $profile = Profile::findOrFail($item);
+            if ($profile->id == $user->id) {
+                return abort(403);
+            }
+            $class = get_class($profile);
+            $filterable['id'] = $profile->id;
+            $filterable['type'] = $class;
+            break;
+
+          default:
+            abort(400);
+            break;
+        }
+
+
+        $filter = UserFilter::whereUserId($user->id)
+            ->whereFilterableId($filterable['id'])
+            ->whereFilterableType($filterable['type'])
+            ->whereFilterType('block')
+            ->first();
+
+        if($filter) {
+            $filter->delete();
+        }
+
+        $pid = $user->id;
+        Cache::forget("user:filter:list:$pid");
+        Cache::forget("feature:discover:posts:$pid");
+        Cache::forget("api:local:exp:rec:$pid");
+        
         return redirect()->back();
     }
 

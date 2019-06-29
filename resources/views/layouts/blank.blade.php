@@ -21,15 +21,19 @@
     <meta name="theme-color" content="#10c5f8">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <link rel="shortcut icon" type="image/png" href="/img/favicon.png?v=2">
+    <link rel="apple-touch-icon" type="image/png" href="/img/favicon.png?v=2">
     <link rel="canonical" href="{{request()->url()}}">
-    <link href="{{ mix('css/app.css') }}" rel="stylesheet">
+    <link href="{{ mix('css/app.css') }}" rel="stylesheet" data-stylesheet="light">
     @stack('styles')
 </head>
 <body class="">
     <main id="content">
         @yield('content')
     </main>
+    <script type="text/javascript" src="{{ mix('js/manifest.js') }}"></script>
+    <script type="text/javascript" src="{{ mix('js/vendor.js') }}"></script>
     <script type="text/javascript" src="{{ mix('js/app.js') }}"></script>
+    <script type="text/javascript" src="{{ mix('js/components.js') }}"></script>
     @stack('scripts')
 </body>
 </html>

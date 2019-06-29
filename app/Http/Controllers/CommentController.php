@@ -4,10 +4,13 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Auth;
+use DB;
+use Cache;
 
 use App\Comment;
 use App\Jobs\CommentPipeline\CommentPipeline;
 use App\Jobs\StatusPipeline\NewStatusPipeline;
+use App\Util\Lexer\Autolink;
 use App\Profile;
 use App\Status;
 use League\Fractal;
@@ -40,8 +43,8 @@ class CommentController extends Controller
             abort(403);
         }
         $this->validate($request, [
-            'item'    => 'required|integer',
-            'comment' => 'required|string|max:500',
+            'item'    => 'required|integer|min:1',
+            'comment' => 'required|string|max:'.(int) config('pixelfed.max_caption_length'),
         ]);
         $comment = $request->input('comment');
         $statusId = $request->item;
@@ -50,13 +53,25 @@ class CommentController extends Controller
         $profile = $user->profile;
         $status = Status::findOrFail($statusId);
 
-        $reply = new Status();
-        $reply->profile_id = $profile->id;
-        $reply->caption = e($comment);
-        $reply->rendered = $comment;
-        $reply->in_reply_to_id = $status->id;
-        $reply->in_reply_to_profile_id = $status->profile_id;
-        $reply->save();
+        if($status->comments_disabled == true) {
+            return;
+        }
+
+        $reply = DB::transaction(function() use($comment, $status, $profile) {
+            $autolink = Autolink::create()->autolink($comment);
+            $reply = new Status();
+            $reply->profile_id = $profile->id;
+            $reply->caption = e($comment);
+            $reply->rendered = $autolink;
+            $reply->in_reply_to_id = $status->id;
+            $reply->in_reply_to_profile_id = $status->profile_id;
+            $reply->save();
+
+            $status->reply_count++;
+            $status->save();
+
+            return $reply;
+        });
 
         NewStatusPipeline::dispatch($reply, false);
         CommentPipeline::dispatch($status, $reply);

@@ -24,7 +24,14 @@ class StatusEntityLexer implements ShouldQueue
     protected $status;
     protected $entities;
     protected $autolink;
-
+    
+    /**
+     * Delete the job if its models no longer exist.
+     *
+     * @var bool
+     */
+    public $deleteWhenMissingModels = true;
+    
     /**
      * Create a new job instance.
      *
@@ -68,7 +75,6 @@ class StatusEntityLexer implements ShouldQueue
     public function storeEntities()
     {
         $this->storeHashtags();
-        $this->storeMentions();
         DB::transaction(function () {
             $status = $this->status;
             $status->rendered = nl2br($this->autolink);
@@ -89,10 +95,15 @@ class StatusEntityLexer implements ShouldQueue
                     ['name' => $tag, 'slug' => $slug]
                 );
                 StatusHashtag::firstOrCreate(
-                    ['status_id' => $status->id, 'hashtag_id' => $hashtag->id]
+                    [
+                        'status_id' => $status->id, 
+                        'hashtag_id' => $hashtag->id,
+                        'profile_id' => $status->profile_id
+                    ]
                 );
             });
         }
+        $this->storeMentions();
     }
 
     public function storeMentions()
@@ -101,7 +112,7 @@ class StatusEntityLexer implements ShouldQueue
         $status = $this->status;
 
         foreach ($mentions as $mention) {
-            $mentioned = Profile::whereUsername($mention)->firstOrFail();
+            $mentioned = Profile::whereUsername($mention)->first();
 
             if (empty($mentioned) || !isset($mentioned->id)) {
                 continue;
@@ -115,6 +126,14 @@ class StatusEntityLexer implements ShouldQueue
 
                 MentionPipeline::dispatch($status, $m);
             });
+        }
+        $this->deliver();
+    }
+
+    public function deliver()
+    {
+        if(config('federation.activitypub.enabled') == true) {
+            StatusActivityPubDeliver::dispatch($this->status);
         }
     }
 }

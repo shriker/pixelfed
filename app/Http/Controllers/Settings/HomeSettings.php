@@ -10,6 +10,7 @@ use App\User;
 use App\UserFilter;
 use App\Util\Lexer\PrettyNumber;
 use Auth;
+use Cache;
 use DB;
 use Purify;
 use Illuminate\Http\Request;
@@ -37,40 +38,20 @@ trait HomeSettings
         'name'    => 'required|string|max:'.config('pixelfed.max_name_length'),
         'bio'     => 'nullable|string|max:'.config('pixelfed.max_bio_length'),
         'website' => 'nullable|url',
-        'email'   => 'nullable|email',
       ]);
 
         $changes = false;
-        $name = strip_tags($request->input('name'));
-        $bio = $request->filled('bio') ? Purify::clean($request->input('bio')) : null;
+        $name = strip_tags(Purify::clean($request->input('name')));
+        $bio = $request->filled('bio') ? strip_tags(Purify::clean($request->input('bio'))) : null;
         $website = $request->input('website');
-        $email = $request->input('email');
         $user = Auth::user();
         $profile = $user->profile;
+        $layout = $request->input('profile_layout');
+        if($layout) {
+            $layout = !in_array($layout, ['metro', 'moment']) ? 'metro' : $layout;
+        }
 
         $validate = config('pixelfed.enforce_email_verification');
-
-        if ($user->email != $email) {
-            $changes = true;
-            $user->email = $email;
-
-            if ($validate) {
-                $user->email_verified_at = null;
-                // Prevent old verifications from working
-                EmailVerification::whereUserId($user->id)->delete();
-            }
-
-            $log = new AccountLog();
-            $log->user_id = $user->id;
-            $log->item_id = $user->id;
-            $log->item_type = 'App\User';
-            $log->action = 'account.edit.email';
-            $log->message = 'Email changed';
-            $log->link = null;
-            $log->ip_address = $request->ip();
-            $log->user_agent = $request->userAgent();
-            $log->save();
-        }
 
         // Only allow email to be updated if not yet verified
         if (!$validate || !$changes && $user->email_verified_at) {
@@ -89,9 +70,15 @@ trait HomeSettings
                 $changes = true;
                 $profile->bio = $bio;
             }
+
+            if ($profile->profile_layout != $layout) {
+                $changes = true;
+                $profile->profile_layout = $layout;
+            }
         }
 
         if ($changes === true) {
+            Cache::forget('user:account:id:'.$user->id);
             $user->save();
             $profile->save();
 
@@ -136,14 +123,61 @@ trait HomeSettings
             $log->save();
 
             return redirect('/settings/home')->with('status', 'Password successfully updated!');
+        } else {
+            return redirect()->back()->with('error', 'There was an error with your request! Please try again.');
         }
 
-        return redirect('/settings/home')->with('error', 'There was an error with your request!');
     }
 
     public function email()
     {
         return view('settings.email');
+    }
+
+    public function emailUpdate(Request $request)
+    {
+        $this->validate($request, [
+            'email'   => 'required|email',
+        ]);
+        $changes = false;
+        $email = $request->input('email');
+        $user = Auth::user();
+        $profile = $user->profile;
+
+        $validate = config('pixelfed.enforce_email_verification');
+
+        if ($user->email != $email) {
+            $changes = true;
+            $user->email = $email;
+
+            if ($validate) {
+                $user->email_verified_at = null;
+                // Prevent old verifications from working
+                EmailVerification::whereUserId($user->id)->delete();
+            }
+
+            $log = new AccountLog();
+            $log->user_id = $user->id;
+            $log->item_id = $user->id;
+            $log->item_type = 'App\User';
+            $log->action = 'account.edit.email';
+            $log->message = 'Email changed';
+            $log->link = null;
+            $log->ip_address = $request->ip();
+            $log->user_agent = $request->userAgent();
+            $log->save();
+        }
+
+        if ($changes === true) {
+            Cache::forget('user:account:id:'.$user->id);
+            $user->save();
+            $profile->save();
+
+            return redirect('/settings/home')->with('status', 'Email successfully updated!');
+        } else {
+            return redirect('/settings/email');
+        }
+
     }
 
     public function avatar()

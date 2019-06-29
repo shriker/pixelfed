@@ -1,68 +1,39 @@
-$(document).ready(function() {
-  $('.pagination').hide();
-  $('.container.timeline-container').removeClass('d-none');
-  let elem = document.querySelector('.timeline-feed');
-  let type = elem.getAttribute('data-timeline');
-  $('.timeline-sidenav .nav-link[data-type="'+type+'"]').addClass('active');
-  pixelfed.readmore();
-  pixelfed.fetchLikes();
-  $('video').on('play', function() {
-    activated = this;
-    $('video').each(function() {
-      if(this != activated) this.pause();
-    });
-  });
-  let infScroll = new InfiniteScroll( elem, {
-    path: '.pagination__next',
-    append: '.timeline-feed',
-    status: '.page-load-status',
-    history: false,
-  });
-  
-  infScroll.on( 'append', function( response, path, items ) {
-    pixelfed.hydrateLikes();
-    $('.status-card > .card-footer').each(function() {
-      var el = $(this);
-      if(!el.hasClass('d-none') && !el.find('input[name="comment"]').val()) {
-        $(this).addClass('d-none');
-      }
-    });
-    $('video').on('play', function() {
-      activated = this;
-      $('video').each(function() {
-        if(this != activated) this.pause();
-      });
-    });
-  });
+Vue.component(
+    'notification-card',
+    require('./components/NotificationCard.vue').default
+);
 
+Vue.component(
+    'photo-presenter',
+    require('./components/presenter/PhotoPresenter.vue').default
+);
 
-});
+Vue.component(
+    'video-presenter',
+    require('./components/presenter/VideoPresenter.vue').default
+);
 
-$(document).on("DOMContentLoaded", function() {
+Vue.component(
+    'photo-album-presenter',
+    require('./components/presenter/PhotoAlbumPresenter.vue').default
+);
 
-  var active = false;
-  var lazyLoad = function() {
-    pixelfed.readmore();
-    if (active === false) {
-      active = true;
+Vue.component(
+    'video-album-presenter',
+    require('./components/presenter/VideoAlbumPresenter.vue').default
+);
 
-        var lazyImages = [].slice.call(document.querySelectorAll("img.lazy"));
-        lazyImages.forEach(function(lazyImage) {
-          if ((lazyImage.getBoundingClientRect().top <= window.innerHeight && lazyImage.getBoundingClientRect().bottom >= 0) && getComputedStyle(lazyImage).display !== "none") {
-            lazyImage.src = lazyImage.dataset.src;
-            lazyImage.srcset = lazyImage.dataset.srcset;
-            lazyImage.classList.remove("lazy");
+Vue.component(
+    'mixed-album-presenter',
+    require('./components/presenter/MixedAlbumPresenter.vue').default
+);
 
-            lazyImages = lazyImages.filter(function(image) {
-              return image !== lazyImage;
-            });
-          }
-        });
+Vue.component(
+    'post-menu',
+    require('./components/PostMenu.vue').default
+);
 
-        active = false;
-    };
-  }
-  document.addEventListener("scroll", lazyLoad);
-  window.addEventListener("resize", lazyLoad);
-  window.addEventListener("orientationchange", lazyLoad);
-});
+Vue.component(
+    'timeline',
+    require('./components/Timeline.vue').default
+);

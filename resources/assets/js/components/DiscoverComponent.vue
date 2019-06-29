@@ -1,29 +1,20 @@
 <template>
 <div class="container">
-  <!-- <section class="mb-5 section-people">
-    <p class="lead text-muted font-weight-bold mb-0">Discover People</p>
-    <div class="loader text-center">
-    	<div class="lds-ring"><div></div><div></div><div></div><div></div></div>
-    </div>
-    <div class="row d-none">
-      <div class="col-4 p-0 p-sm-2 p-md-3" v-for="profile in people">
-        <div class="card card-md-border-0">
-          <div class="card-body p-4 text-center">
-            <div class="avatar pb-3">
-              <a :href="profile.url">
-                <img :src="profile.avatar" class="img-thumbnail rounded-circle" width="64px">
-              </a>
-            </div>
-            <p class="lead font-weight-bold mb-0 text-truncate"><a :href="profile.url" class="text-dark">{{profile.username}}</a></p>
-            <p class="text-muted text-truncate">{{profile.name}}</p>
-            <button class="btn btn-primary font-weight-bold px-4 py-0" v-on:click="followUser(profile.id, $event)">Follow</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section> -->
+
+  <section class="d-none d-md-flex mb-md-2 pt-2 discover-bar" style="width:auto; overflow: auto hidden;" v-if="categories.length > 0">
+    <a v-if="config.ab.loops == true" class="text-decoration-none bg-transparent border border-success rounded d-inline-flex align-items-center justify-content-center mr-3 card-disc" href="/discover/loops">
+      <p class="text-success lead font-weight-bold mb-0">Loops</p>
+    </a>
+    <!-- <a class="text-decoration-none rounded d-inline-flex align-items-center justify-content-center mr-3 box-shadow card-disc" href="/discover/personal" style="background: rgb(255, 95, 109);">
+      <p class="text-white lead font-weight-bold mb-0">For You</p>
+    </a> -->
+
+    <a v-for="(category, index) in categories" :key="index+'_cat_'" class="bg-dark rounded d-inline-flex align-items-end justify-content-center mr-3 box-shadow card-disc" :href="category.url" :style="'background: linear-gradient(rgba(0, 0, 0, 0.3),rgba(0, 0, 0, 0.3)),url('+category.thumb+');'">
+      <p class="text-white font-weight-bold" style="text-shadow: 3px 3px 16px #272634;">{{category.name}}</p>
+    </a>
+
+  </section>
   <section class="mb-5 section-explore">
-    <p class="lead text-muted font-weight-bold mb-0">Explore</p>
     <div class="profile-timeline">
 	    <div class="loader text-center">
 	    	<div class="lds-ring"><div></div><div></div><div></div><div></div></div>
@@ -31,8 +22,12 @@
       <div class="row d-none">
         <div class="col-4 p-0 p-sm-2 p-md-3" v-for="post in posts">
           <a class="card info-overlay card-md-border-0" :href="post.url">
-            <div class="square filter_class">
-              <div class="square-content" v-bind:style="{ 'background-image': 'url(' + post.thumb + ')' }"></div>
+            <div class="square">
+              <span v-if="post.type == 'photo:album'" class="float-right mr-3 post-icon"><i class="fas fa-images fa-2x"></i></span>
+              <span v-if="post.type == 'video'" class="float-right mr-3 post-icon"><i class="fas fa-video fa-2x"></i></span>
+              <span v-if="post.type == 'video:album'" class="float-right mr-3 post-icon"><i class="fas fa-film fa-2x"></i></span>
+              <div class="square-content" v-bind:style="{ 'background-image': 'url(' + post.thumb + ')' }">
+              </div>
             </div>
           </a>
         </div>
@@ -45,21 +40,44 @@
 </div>
 </template>
 
+<style type="text/css" scoped>
+  .discover-bar::-webkit-scrollbar { 
+      display: none; 
+  }
+  .card-disc {
+    flex: 0 0 160px;
+    width:160px;
+    height:100px;
+    background-size: cover !important;
+  }
+  .post-icon {
+    color: #fff;
+    position:relative;
+    margin-top: 10px;
+    z-index: 9;
+    opacity: 0.6;
+    text-shadow: 3px 3px 16px #272634;
+  }
+</style>
+
 <script type="text/javascript">
 export default {
 	data() {
 		return {
-			people: {},
+      config: {},
 			posts: {},
-			trending: {}
+			trending: {},
+      categories: {},
+      allCategories: {},
 		}
 	},
 	mounted() {
     this.fetchData();
+    this.fetchCategories();
 	},
 
 	methods: {
-    
+
     followUser(id, event) {
       axios.post('/i/follow', {
         item: id
@@ -68,26 +86,18 @@ export default {
         el.addClass('btn-outline-secondary').removeClass('btn-primary');
         el.text('Unfollow');
       }).catch(err => {
-        swal(
-          'Whoops! Something went wrong...',
-          'An error occurred, please try again later.',
-          'error'
-        );
+        if(err.response.data.message) {
+          swal('Error', err.response.data.message, 'error');
+        }
       });
     },
 
 		fetchData() {
-      // axios.get('/api/v2/discover/people')
-      // .then((res) => {
-      //   let data = res.data;
-      //   this.people = data.people;
-
-      //   if(this.people.length > 1) {
-      //     $('.section-people .loader').hide();
-      //     $('.section-people .row.d-none').removeClass('d-none');
-      //   }
-      // });
-
+      axios.get('/api/v2/config')
+      .then((res) => {
+        let data = res.data;
+        this.config = data;
+      });
       axios.get('/api/v2/discover/posts')
       .then((res) => {
         let data = res.data;
@@ -98,7 +108,15 @@ export default {
           $('.section-explore .row.d-none').removeClass('d-none');
         }
       });
-		}
+		},
+
+    fetchCategories() {
+      axios.get('/api/v2/discover/categories')
+        .then(res => {
+          this.allCategories = res.data;
+          this.categories = res.data;
+      });
+    },
 	}
 }
 </script>

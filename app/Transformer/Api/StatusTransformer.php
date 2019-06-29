@@ -4,6 +4,7 @@ namespace App\Transformer\Api;
 
 use App\Status;
 use League\Fractal;
+use Cache;
 
 class StatusTransformer extends Fractal\TransformerAbstract
 {
@@ -17,23 +18,23 @@ class StatusTransformer extends Fractal\TransformerAbstract
     public function transform(Status $status)
     {
         return [
-            'id'                        => $status->id,
+            'id'                        => (string) $status->id,
             'uri'                       => $status->url(),
             'url'                       => $status->url(),
             'in_reply_to_id'            => $status->in_reply_to_id,
             'in_reply_to_account_id'    => $status->in_reply_to_profile_id,
-            'reblog'                    => $status->reblog_of_id || $status->in_reply_to_id ? $this->transform($status->parent()) : null,
+            'reblog'                    => null,
             'content'                   => $status->rendered ?? $status->caption,
             'created_at'                => $status->created_at->format('c'),
             'emojis'                    => [],
-            'reblogs_count'             => $status->shares()->count(),
-            'favourites_count'          => $status->likes()->count(),
+            'reblogs_count'             => $status->reblogs_count != 0 ? $status->reblogs_count: $status->shares()->count(),
+            'favourites_count'          => $status->likes_count != 0 ? $status->likes_count: $status->likes()->count(),
             'reblogged'                 => $status->shared(),
             'favourited'                => $status->liked(),
             'muted'                     => null,
             'sensitive'                 => (bool) $status->is_nsfw,
             'spoiler_text'              => $status->cw_summary,
-            'visibility'                => $status->visibility,
+            'visibility'                => $status->visibility ?? $status->scope,
             'application'               => [
                 'name'      => 'web',
                 'website'   => null
@@ -41,7 +42,12 @@ class StatusTransformer extends Fractal\TransformerAbstract
             'language'                  => null,
             'pinned'                    => null,
 
-            'pf_type'          => $status->type ?? $status->setType(),
+            'pf_type'                   => $status->type ?? $status->setType(),
+            'reply_count'               => (int) $status->reply_count,
+            'comments_disabled'         => $status->comments_disabled ? true : false,
+            'thread'                    => false,
+            'replies'                   => [],
+            'parent'                    => [],
         ];
     }
 
@@ -61,9 +67,12 @@ class StatusTransformer extends Fractal\TransformerAbstract
 
     public function includeMediaAttachments(Status $status)
     {
-        $media = $status->media()->orderBy('order')->get();
-
-        return $this->collection($media, new MediaTransformer());
+        return Cache::remember('status:transformer:media:attachments:'.$status->id, now()->addDays(14), function() use($status) {
+            if(in_array($status->type, ['photo', 'video', 'photo:album', 'loop', 'photo:video:album'])) {
+                $media = $status->media()->orderBy('order')->get();
+                return $this->collection($media, new MediaTransformer());
+            }
+        });
     }
 
     public function includeTags(Status $status)

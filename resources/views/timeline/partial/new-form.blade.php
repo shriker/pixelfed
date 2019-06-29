@@ -1,10 +1,6 @@
-    <div class="card card-md-rounded-0">
+    <div class="card card-md-rounded-0 metro-classic-compose">
       <div class="card-header bg-white font-weight-bold d-inline-flex justify-content-between">
         <div>{{__('Create New Post')}}</div>
-        <div>
-          <span class="badge badge-success mr-1">NEW</span>
-          <a href="/i/compose">Experimental UI</a>
-        </div>
       </div>
       <div class="card-body" id="statusForm">
 
@@ -22,7 +18,7 @@
             </small>
           </div>
           <div class="form-group">
-            <textarea class="form-control" name="caption" placeholder="Add a caption here" autocomplete="off" data-limit="{{config('pixelfed.max_caption_length')}}" rows="1"></textarea>
+            <textarea class="form-control" name="caption" placeholder="Add optional caption here" autocomplete="off" data-limit="{{config('pixelfed.max_caption_length')}}" rows="1"></textarea>
             <p class="form-text text-muted small text-right">
               <span class="caption-counter">0</span>
               <span>/</span>
@@ -38,9 +34,15 @@
                 <label class="font-weight-bold text-muted small">Visibility</label>
                 <div class="switch switch-sm">
                   <select class="form-control" name="visibility">
-                    <option value="public" selected="">Public</option>
-                    <option value="unlisted">Unlisted (hidden from public timelines)</option>
-                    <option value="private">Followers Only</option>
+                    @if(Auth::user()->profile->is_private)
+                      <option value="public">Public</option>
+                      <option value="unlisted">Unlisted (hidden from public timelines)</option>
+                      <option value="private" selected="">Followers Only</option>
+                    @else
+                      <option value="public" selected="">Public</option>
+                      <option value="unlisted">Unlisted (hidden from public timelines)</option>
+                      <option value="private">Followers Only</option>
+                    @endif
                   </select>
                 </div>
                 <small class="form-text text-muted">

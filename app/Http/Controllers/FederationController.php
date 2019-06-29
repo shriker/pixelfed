@@ -2,9 +2,17 @@
 
 namespace App\Http\Controllers;
 
-use App\Jobs\InboxPipeline\InboxWorker;
+use App\Jobs\InboxPipeline\{
+    InboxWorker,
+    InboxValidator
+};
 use App\Jobs\RemoteFollowPipeline\RemoteFollowPipeline;
-use App\Profile;
+use App\{
+    AccountLog,
+    Like,
+    Profile,
+    Status
+};
 use App\Transformer\ActivityPub\ProfileOutbox;
 use App\Util\Lexer\Nickname;
 use App\Util\Webfinger\Webfinger;
@@ -13,25 +21,25 @@ use Cache;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use League\Fractal;
-use App\Util\ActivityPub\Helpers;
-use App\Util\ActivityPub\HttpSignature;
+use App\Util\ActivityPub\{
+    Helpers,
+    HttpSignature
+};
 use \Zttp\Zttp;
 
 class FederationController extends Controller
 {
     public function authCheck()
     {
-        if (!Auth::check()) {
-            return abort(403);
-        }
+        abort_if(!Auth::check(), 403);
     }
 
     public function authorizeFollow(Request $request)
     {
         $this->authCheck();
         $this->validate($request, [
-        'acct' => 'required|string|min:3|max:255',
-      ]);
+            'acct' => 'required|string|min:3|max:255',
+        ]);
         $acct = $request->input('acct');
         $nickname = Nickname::normalizeProfileUrl($acct);
 
@@ -47,25 +55,32 @@ class FederationController extends Controller
 
     public function remoteFollowStore(Request $request)
     {
+        return;
+
         $this->authCheck();
         $this->validate($request, [
             'url' => 'required|string',
         ]);
 
-        if (config('pixelfed.remote_follow_enabled') !== true) {
-            abort(403);
-        }
+        abort_if(!config('federation.activitypub.remoteFollow'), 403);
 
         $follower = Auth::user()->profile;
         $url = $request->input('url');
+        $url = Helpers::validateUrl($url);
+
+        if(!$url) {
+            return;
+        }
 
         RemoteFollowPipeline::dispatch($follower, $url);
 
-        return redirect()->back();
+        return response(['success' => true, 'follower' => $follower]);
     }
 
     public function nodeinfoWellKnown()
     {
+        abort_if(!config('federation.nodeinfo.enabled'), 404);
+
         $res = [
         'links' => [
           [
@@ -80,41 +95,61 @@ class FederationController extends Controller
 
     public function nodeinfo()
     {
-        $res = Cache::remember('api:nodeinfo', 60, function () {
-            return [
-          'metadata' => [
-            'nodeName' => config('app.name'),
-            'software' => [
-              'homepage' => 'https://pixelfed.org',
-              'github'   => 'https://github.com/pixelfed',
-              'follow'   => 'https://mastodon.social/@pixelfed',
-            ],
-          ],
-          'openRegistrations' => config('pixelfed.open_registration'),
-          'protocols'         => [
-            'activitypub',
-          ],
-          'services' => [
-            'inbound'  => [],
-            'outbound' => [],
-          ],
-          'software' => [
-            'name'    => 'pixelfed',
-            'version' => config('pixelfed.version'),
-          ],
-          'usage' => [
-            'localPosts'    => \App\Status::whereLocal(true)->whereHas('media')->count(),
-            'localComments' => \App\Status::whereLocal(true)->whereNotNull('in_reply_to_id')->count(),
-            'users'         => [
-              'total'          => \App\User::count(),
-              'activeHalfyear' => \App\AccountLog::select('user_id')->whereAction('auth.login')->where('updated_at', '>',Carbon::now()->subMonths(6)->toDateTimeString())->groupBy('user_id')->get()->count(),
-              'activeMonth'    => \App\AccountLog::select('user_id')->whereAction('auth.login')->where('updated_at', '>',Carbon::now()->subMonths(1)->toDateTimeString())->groupBy('user_id')->get()->count(),
-            ],
-          ],
-          'version' => '2.0',
-        ];
-        });
+        abort_if(!config('federation.nodeinfo.enabled'), 404);
 
+        $res = Cache::remember('api:nodeinfo', now()->addMinutes(15), function () {
+            $activeHalfYear = Cache::remember('api:nodeinfo:ahy', now()->addHours(12), function() {
+                $count = collect([]);
+                // $likes = Like::select('profile_id')->where('created_at', '>', now()->subMonths(6)->toDateTimeString())->groupBy('profile_id')->pluck('profile_id')->toArray();
+                // $count = $count->merge($likes);
+                $statuses = Status::select('profile_id')->whereLocal(true)->where('created_at', '>', now()->subMonths(6)->toDateTimeString())->groupBy('profile_id')->pluck('profile_id')->toArray();
+                $count = $count->merge($statuses);
+                $profiles = Profile::select('id')->whereNull('domain')->where('created_at', '>', now()->subMonths(6)->toDateTimeString())->groupBy('id')->pluck('id')->toArray();
+                $count = $count->merge($profiles);
+                return $count->unique()->count();
+            });
+            $activeMonth = Cache::remember('api:nodeinfo:am', now()->addHours(12), function() {
+                $count = collect([]);
+                // $likes = Like::select('profile_id')->where('created_at', '>', now()->subMonths(1)->toDateTimeString())->groupBy('profile_id')->pluck('profile_id')->toArray();
+                // $count = $count->merge($likes);
+                $statuses = Status::select('profile_id')->whereLocal(true)->where('created_at', '>', now()->subMonths(1)->toDateTimeString())->groupBy('profile_id')->pluck('profile_id')->toArray();
+                $count = $count->merge($statuses);
+                $profiles = Profile::select('id')->whereNull('domain')->where('created_at', '>', now()->subMonths(1)->toDateTimeString())->groupBy('id')->pluck('id')->toArray();
+                $count = $count->merge($profiles);
+                return $count->unique()->count();
+            });
+            return [
+                'metadata' => [
+                    'nodeName' => config('app.name'),
+                    'software' => [
+                        'homepage'  => 'https://pixelfed.org',
+                        'repo'      => 'https://github.com/pixelfed/pixelfed',
+                    ],
+                ],
+                'protocols'         => [
+                    'activitypub',
+                ],
+                'services' => [
+                    'inbound'  => [],
+                    'outbound' => [],
+                ],
+                'software' => [
+                    'name'          => 'pixelfed',
+                    'version'       => config('pixelfed.version'),
+                ],
+                'usage' => [
+                    'localPosts'    => \App\Status::whereLocal(true)->whereHas('media')->count(),
+                    'localComments' => \App\Status::whereLocal(true)->whereNotNull('in_reply_to_id')->count(),
+                    'users'         => [
+                        'total'          => \App\Profile::whereNull('status')->whereNull('domain')->count(),
+                        'activeHalfyear' => $activeHalfYear,
+                        'activeMonth'    => $activeMonth,
+                    ],
+                ],
+                'version' => '2.0',
+            ];
+        });
+        $res['openRegistrations'] = config('pixelfed.open_registration');
         return response()->json($res, 200, [
             'Access-Control-Allow-Origin' => '*'
         ]);
@@ -122,6 +157,8 @@ class FederationController extends Controller
 
     public function webfinger(Request $request)
     {
+        abort_if(!config('federation.webfinger.enabled'), 404);
+
         $this->validate($request, ['resource'=>'required|string|min:3|max:255']);
 
         $resource = $request->input('resource');
@@ -139,22 +176,18 @@ class FederationController extends Controller
 
     public function hostMeta(Request $request)
     {
+        abort_if(!config('federation.webfinger.enabled'), 404);
+
         $path = route('well-known.webfinger');
-        $xml = <<<XML
-<?xml version="1.0" encoding="UTF-8"?>
-<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">
-  <Link rel="lrdd" type="application/xrd+xml" template="{$path}?resource={uri}"/>
-</XRD>
-XML;
+        $xml = '<?xml version="1.0" encoding="UTF-8"?><XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0"><Link rel="lrdd" type="application/xrd+xml" template="'.$path.'?resource={uri}"/></XRD>';
 
         return response($xml)->header('Content-Type', 'application/xrd+xml');
     }
 
     public function userOutbox(Request $request, $username)
     {
-        if (config('pixelfed.activitypub_enabled') == false) {
-            abort(403);
-        }
+        abort_if(!config('federation.activitypub.enabled'), 404);
+        abort_if(!config('federation.activitypub.outbox'), 404);
 
         $profile = Profile::whereNull('remote_url')->whereUsername($username)->firstOrFail();
         if($profile->status != null) {
@@ -173,10 +206,12 @@ XML;
 
     public function userInbox(Request $request, $username)
     {
-        if (config('pixelfed.activitypub_enabled') == false) {
-            abort(403);
-        }
+        abort_if(!config('federation.activitypub.enabled'), 404);
+        abort_if(!config('federation.activitypub.inbox'), 404);
 
+        // $headers = $request->headers->all();
+        // $payload = $request->getContent();
+        // InboxValidator::dispatch($username, $headers, $payload);
         $profile = Profile::whereNull('domain')->whereUsername($username)->firstOrFail();
         if($profile->status != null) {
             return ProfileController::accountCheck($profile);
@@ -193,13 +228,21 @@ XML;
         return;
     }
 
+
     protected function verifySignature(Request $request, Profile $profile)
     {
         $body = $request->getContent();
         $bodyDecoded = json_decode($body, true, 8);
         $signature = $request->header('signature');
+        $date = $request->header('date');
         if(!$signature) {
             abort(400, 'Missing signature header');
+        }
+        if(!$date) {
+            abort(400, 'Missing date header');
+        }
+        if(!now()->parse($date)->gt(now()->subDays(1)) || !now()->parse($date)->lt(now()->addDays(1))) {
+            abort(400, 'Invalid date');
         }
         $signatureData = HttpSignature::parseSignatureHeader($signature);
         $keyId = Helpers::validateUrl($signatureData['keyId']);
@@ -221,6 +264,9 @@ XML;
         if(!$actor) {
             $actor = Helpers::profileFirstOrNew($bodyDecoded['actor']);
         }
+        if(!$actor) {
+            return false;
+        }
         $pkey = openssl_pkey_get_public($actor->public_key);
         $inboxPath = "/users/{$profile->username}/inbox";
         list($verified, $headers) = HTTPSignature::verify($pkey, $signatureData, $request->headers->all(), $inboxPath, $body);
@@ -234,15 +280,22 @@ XML;
     protected function blindKeyRotation(Request $request, Profile $profile)
     {
         $signature = $request->header('signature');
+        $date = $request->header('date');
         if(!$signature) {
             abort(400, 'Missing signature header');
+        }
+        if(!$date) {
+            abort(400, 'Missing date header');
+        }
+        if(!now()->parse($date)->gt(now()->subDays(1)) || !now()->parse($date)->lt(now()->addDays(1))) {
+            abort(400, 'Invalid date');
         }
         $signatureData = HttpSignature::parseSignatureHeader($signature);
         $keyId = Helpers::validateUrl($signatureData['keyId']);
         $actor = Profile::whereKeyId($keyId)->whereNotNull('remote_url')->firstOrFail();
         $res = Zttp::timeout(5)->withHeaders([
           'Accept'     => 'application/ld+json; profile="https://www.w3.org/ns/activitystreams"',
-          'User-Agent' => 'PixelFedBot v0.1 - https://pixelfed.org',
+          'User-Agent' => 'PixelfedBot v0.1 - https://pixelfed.org',
         ])->get($actor->remote_url);
         $res = json_decode($res->body(), true, 8);
         if($res['publicKey']['id'] !== $actor->key_id) {
@@ -255,15 +308,17 @@ XML;
 
     public function userFollowing(Request $request, $username)
     {
-        if (config('pixelfed.activitypub_enabled') == false) {
-            abort(403);
-        }
+        abort_if(!config('federation.activitypub.enabled'), 404);
+
         $profile = Profile::whereNull('remote_url')
             ->whereUsername($username)
             ->whereIsPrivate(false)
             ->firstOrFail();
+            
+        return [];
+
         if($profile->status != null) {
-            return ProfileController::accountCheck($profile);
+            return [];
         }
         $obj = [
             '@context' => 'https://www.w3.org/ns/activitystreams',
@@ -279,15 +334,17 @@ XML;
 
     public function userFollowers(Request $request, $username)
     {
-        if (config('pixelfed.activitypub_enabled') == false) {
-            abort(403);
-        }
+        abort_if(!config('federation.activitypub.enabled'), 404);
+
         $profile = Profile::whereNull('remote_url')
             ->whereUsername($username)
             ->whereIsPrivate(false)
             ->firstOrFail();
+
+        return [];
+
         if($profile->status != null) {
-            return ProfileController::accountCheck($profile);
+            return [];
         }
         $obj = [
             '@context' => 'https://www.w3.org/ns/activitystreams',

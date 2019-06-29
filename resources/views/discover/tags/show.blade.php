@@ -15,9 +15,6 @@
         <div class="username-bar pb-2  d-flex align-items-center">
           <span class="h1">{{$tag->name}}</span>
         </div>
-        <p class="font-weight-bold">
-          {{$tag->posts_count}} posts
-        </p>
       </div>
     </div>
   </div>
@@ -44,31 +41,13 @@
       @endforeach
     </div>
   </div>
-  <div class="d-flex justify-content-center pagination-container mt-4">
-    {{$posts->links()}}
-  </div>
 </div>
 
 @endsection
 
-@push('meta')
-<meta property="og:description" content="Discover {{$tag->name}}">
-@endpush
-
 @push('scripts')
+<script type="text/javascript" src="{{ mix('js/compose.js') }}"></script>
 <script type="text/javascript">
-
-  $(document).ready(function() {
-    $('.pagination-container').hide();
-    $('.pagination').hide();
-    let elem = document.querySelector('.tag-timeline');
-    let infScroll = new InfiniteScroll( elem, {
-      path: '.pagination__next',
-      append: '.tag-timeline',
-      status: '.page-load-status',
-      history: true,
-    });
-  });
-
+$(document).ready(function(){new Vue({el: '#content'});});
 </script>
 @endpush

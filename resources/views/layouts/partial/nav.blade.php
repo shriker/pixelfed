@@ -7,65 +7,69 @@
 
         <div class="collapse navbar-collapse" id="navbarSupportedContent">
             @auth
-            <ul class="navbar-nav ml-auto d-none d-md-block">
-              <form class="form-inline search-form">
-                <input class="form-control mr-sm-2 search-form-input" type="search" placeholder="Search" aria-label="Search">
+            <ul class="navbar-nav mx-auto pr-3">
+              <form class="form-inline search-bar" method="get" action="/i/results">
+                <div class="input-group">
+                    <input class="form-control" name="q" placeholder="{{__('navmenu.search')}}" aria-label="search" autocomplete="off" required>
+                    <div class="input-group-append">
+                        <button class="btn btn-outline-primary" type="submit"><i class="fas fa-search"></i></button>
+                    </div>
+                </div>
               </form>
             </ul>
             @endauth
 
-            <ul class="navbar-nav ml-auto">
                 @guest
+            <ul class="navbar-nav ml-auto">
                     <li><a class="nav-link font-weight-bold text-primary" href="{{ route('login') }}" title="Login">{{ __('Login') }}</a></li>
                     <li><a class="nav-link font-weight-bold" href="{{ route('register') }}" title="Register">{{ __('Register') }}</a></li>
                 @else
-                    <li class="pr-md-2">
-                        <a class="nav-link font-weight-bold {{request()->is('/') ?'text-primary':''}}" href="/" title="Home Timeline">
-                        <span class="d-block d-md-none">
-                            <i class="fas fa-home fa-lg"></i>
-                        </span>
-                        <span class="d-none d-md-block">
-                            {{ __('Home') }}
-                        </span>
-                        </a>
-                    </li>
-                    <li class="pr-md-2">
-                        <a class="nav-link font-weight-bold {{request()->is('timeline/public') ?'text-primary':''}}" href="/timeline/public" title="Local Timeline">
-                        <span class="d-block d-md-none">
-                            <i class="far fa-map fa-lg"></i>
-                        </span>
-                        <span class="d-none d-md-block">
-                            {{ __('Local') }}
-                        </span> 
-                        </a>
-                    </li>
+            <ul class="navbar-nav ml-auto">
+                    <div class="d-none d-md-block">
+                        <li class="nav-item px-md-2">
+                            <a class="nav-link font-weight-bold {{request()->is('/') ?'text-dark':'text-muted'}}" href="/" title="Home Timeline" data-toggle="tooltip" data-placement="bottom">
+                                <i class="fas fa-home fa-lg"></i>
+                            </a>
+                        </li>
+                    </div>
+                    {{-- <div class="d-none d-md-block">
+                        <li class="nav-item px-md-2">
+                            <a class="nav-link font-weight-bold {{request()->is('timeline/public') ?'text-primary':''}}" href="/timeline/public" title="Public Timeline" data-toggle="tooltip" data-placement="bottom">
+                               <i class="far fa-map fa-lg"></i>
+                           </a>
+                       </li>
+                   </div>  --}}
+                    
                     <li class="d-block d-md-none">
-                        <a class="nav-link" href="/account/activity">
-                            <i class="fas fa-inbox fa-lg"></i>
-                        </a>
+
                     </li>
+
                     {{-- <li class="pr-2">
-                        <a class="nav-link font-weight-bold" href="/" title="Home">
-                        {{ __('Network') }}
+                        <a class="nav-link font-weight-bold {{request()->is('timeline/network') ?'text-primary':''}}" href="{{route('timeline.network')}}" title="Network Timeline">
+                            <i class="fas fa-globe fa-lg"></i>
                         </a>
                     </li> --}}
-                    <li class="nav-item pr-md-2">
-                        <a class="nav-link font-weight-bold" href="{{route('discover')}}" title="Discover" data-toggle="tooltip" data-placement="bottom">
-                        <span class="d-none d-md-block">
-                            {{ __('Discover')}}</i>
-                        </span>
-                        </a>
-                    </li>
-                    <li class="nav-item pr-md-2">
-                        <div title="Create new post" data-toggle="tooltip" data-placement="bottom">
-                            <a href="{{route('compose')}}" class="nav-link" data-toggle="modal" data-target="#composeModal">
-                              <i class="fas fa-camera-retro fa-lg text-primary"></i>
+                    <div class="d-none d-md-block">
+                        <li class="nav-item px-md-2">
+                            <a class="nav-link font-weight-bold {{request()->is('*discover*') ?'text-dark':'text-muted'}}" href="{{route('discover')}}" title="Discover" data-toggle="tooltip" data-placement="bottom">
+                                <i class="far fa-compass fa-lg"></i>
                             </a>
-                        </div>
-                    </li>
+                        </li>
+                    </div>
+                    <div class="d-none d-md-block">
+                        <li class="nav-item px-md-2">
+                            <div title="Create new post" data-toggle="tooltip" data-placement="bottom">
+                                <a href="{{route('compose')}}" class="nav-link" data-toggle="modal" data-target="#composeModal">
+                                  <i class="fas fa-camera-retro fa-lg text-primary"></i>
+                                </a>
+                            </div>
+                        </li>
+                    </div>
+                </ul>
+                <ul class="navbar-nav">
                     <li class="nav-item dropdown">
                         <a id="navbarDropdown" class="nav-link dropdown-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" title="User Menu" data-toggle="tooltip" data-placement="bottom">
-                            <i class="far fa-user fa-lg"></i>
+                            <img class="rounded-circle box-shadow mr-1" src="{{Auth::user()->profile->avatarUrl()}}" width="26px" height="26px">
                         </a>
 
                         <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdown">
@@ -73,6 +77,15 @@
                                 <img class="rounded-circle box-shadow mr-1" src="{{Auth::user()->profile->avatarUrl()}}" width="26px" height="26px">
                                 &commat;{{Auth::user()->username}}
                                 <p class="small mb-0 text-muted text-center">{{__('navmenu.viewMyProfile')}}</p>
+                            </a>
+                            <div class="dropdown-divider"></div>
+                            <a class="d-block d-md-none dropdown-item font-weight-bold" href="{{route('discover')}}">
+                                <span class="far fa-compass pr-1"></span>
+                                {{__('navmenu.discover')}}
+                            </a>
+                            <a class="dropdown-item font-weight-bold" href="{{route('notifications')}}">
+                                <span class="far fa-bell pr-1"></span>
+                                Notifications
                             </a>
                             <div class="dropdown-divider"></div>
                             <a class="dropdown-item font-weight-bold" href="{{route('timeline.personal')}}">
@@ -83,20 +96,19 @@
                                 <span class="far fa-map pr-1"></span>
                                 {{__('navmenu.publicTimeline')}}
                             </a>
-
-                            <a class="d-block d-md-none dropdown-item font-weight-bold" href="{{route('discover')}}">
-                                <span class="far fa-compass pr-1"></span>
-                                {{__('Discover')}}
-                            </a>
+                           {{-- <a class="dropdown-item font-weight-bold" href="{{route('timeline.network')}}">
+                                <span class="fas fa-globe pr-1"></span>
+                                Network Timeline
+                            </a> --}}
                             {{-- <a class="dropdown-item font-weight-bold" href="{{route('messages')}}">
                                 <span class="far fa-envelope pr-1"></span>
                                 {{__('navmenu.directMessages')}}
-                            </a> --}}
+                            </a> 
+                            <a class="dropdown-item font-weight-bold" href="{{route('account.circles')}}">
+                                <span class="far fa-circle pr-1"></span>
+                                {{__('Circles')}}
+                            </a>--}}
                             <div class="dropdown-divider"></div>
-                            {{-- <a class="dropdown-item font-weight-bold" href="{{route('remotefollow')}}">
-                                <span class="fas fa-user-plus pr-1"></span>
-                                {{__('navmenu.remoteFollow')}}
-                            </a> --}}
                             <a class="dropdown-item font-weight-bold" href="{{route('settings')}}">
                                 <span class="fas fa-cog pr-1"></span>
                                 {{__('navmenu.settings')}}
@@ -125,10 +137,3 @@
         </div>
     </div>
 </nav>
-@auth
-<nav class="breadcrumb d-md-none d-flex">
-  <form class="form-inline search-form mx-auto">
-   <input class="form-control mr-sm-2 search-form-input" type="search" placeholder="Search" aria-label="Search">
-  </form>
-</nav>
-@endauth

@@ -54,7 +54,7 @@ return [
         |
         */
 
-        'HTML.Doctype' => 'XHTML 1.0 Strict',
+        'HTML.Doctype' => 'XHTML 1.0 Transitional',
 
         /*
         |--------------------------------------------------------------------------
@@ -67,7 +67,10 @@ return [
         |
         */
 
-        'HTML.Allowed' => 'a[href|title|rel],p',
+        'HTML.Allowed' => env('RESTRICT_HTML_TYPES', true) ? 
+            'a[href|title|rel],p,span,br' :
+            'a[href|title|rel],p,span,strong,em,del,b,i,s,strike,h1,h2,h3,h4,h5,h6,ul,ol,li,br',
+
 
         /*
         |--------------------------------------------------------------------------
@@ -135,6 +138,23 @@ return [
             'noopener',
             'nofollow'
         ],
+
+        'HTML.TargetBlank' => true,
+
+        'HTML.Nofollow' => true,
+
+        'URI.DefaultScheme' => 'https',
+
+        'URI.DisableExternalResources' => true,
+
+        'URI.DisableResources' => true,
+
+        'URI.AllowedSchemes' => [
+            'http' => true,
+            'https' => true,
+        ],
+
+        'URI.HostBlacklist' => config('costar.enabled') ? config('costar.domain.block') : [],
 
     ],
 

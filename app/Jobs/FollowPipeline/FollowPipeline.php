@@ -19,6 +19,13 @@ class FollowPipeline implements ShouldQueue
     protected $follower;
 
     /**
+     * Delete the job if its models no longer exist.
+     *
+     * @var bool
+     */
+    public $deleteWhenMissingModels = true;
+    
+    /**
      * Create a new job instance.
      *
      * @return void
@@ -39,6 +46,10 @@ class FollowPipeline implements ShouldQueue
         $actor = $follower->actor;
         $target = $follower->target;
 
+        if($target->domain || !$target->private_key) {
+            return;
+        }
+
         try {
             $notification = new Notification();
             $notification->profile_id = $target->id;
@@ -50,8 +61,6 @@ class FollowPipeline implements ShouldQueue
             $notification->item_type = "App\Profile";
             $notification->save();
 
-            Cache::forever('notification.'.$notification->id, $notification);
-            Cache::forget('feature:discover:people:'.$actor->id);
             $redis = Redis::connection();
 
             $nkey = config('cache.prefix').':user.'.$target->id.'.notifications';

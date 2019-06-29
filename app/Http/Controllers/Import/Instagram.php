@@ -11,6 +11,7 @@ use App\{
 	Profile, 
 	User
 };
+use App\Jobs\ImportPipeline\ImportInstagram;
 
 trait Instagram
 {
@@ -21,6 +22,13 @@ trait Instagram
 
     public function instagramStart(Request $request)
     {	
+        $completed = ImportJob::whereProfileId(Auth::user()->profile->id)
+            ->whereService('instagram')
+            ->whereNotNull('completed_at')
+            ->exists();
+        if($completed == true) {
+            return redirect(route('settings'))->with(['errors' => ['You can only import from Instagram once.']]);
+        }
     	$job = $this->instagramRedirectOrNew();
     	return redirect($job->url());
     }
@@ -74,9 +82,10 @@ trait Instagram
     		->whereStage(1)
     		->firstOrFail();
     		
+        $limit = config('pixelfed.import.instagram.limits.posts');
         foreach ($media as $k => $v) {
         	$original = $v->getClientOriginalName();
-    		if(strlen($original) < 32 || $k > 100) {
+    		if(strlen($original) < 32 || $k > $limit) {
     			continue;
     		}
             $storagePath = "import/{$job->uuid}";
@@ -97,7 +106,6 @@ trait Instagram
         	$job->save();
     	});
         return redirect($job->url());
-    	return view('settings.import.instagram.step-one', compact('profile', 'job'));
     }
 
     public function instagramStepTwo(Request $request, $uuid)
@@ -124,7 +132,7 @@ trait Instagram
     		->firstOrFail();
     	$media = $request->file('media');
     	$file = file_get_contents($media);
-		$json = json_decode($file, true);
+		$json = json_decode($file, true, 5);
 		if(!$json || !isset($json['photos'])) {
 			return abort(500);
 		}
@@ -134,18 +142,39 @@ trait Instagram
         $job->stage = 3;
         $job->save();
         return redirect($job->url());
-		return $json;
-
     }
 
     public function instagramStepThree(Request $request, $uuid)
     {
     	$profile = Auth::user()->profile;
     	$job = ImportJob::whereProfileId($profile->id)
+            ->whereService('instagram')
     		->whereNull('completed_at')
     		->whereUuid($uuid)
     		->whereStage(3)
     		->firstOrFail();
     	return view('settings.import.instagram.step-three', compact('profile', 'job'));
+    }
+
+    public function instagramStepThreeStore(Request $request, $uuid)
+    {
+        $profile = Auth::user()->profile;
+
+
+        try {
+        $import = ImportJob::whereProfileId($profile->id)
+            ->where('uuid', $uuid)
+            ->whereNotNull('media_json')
+            ->whereNull('completed_at')
+            ->whereStage(3)
+            ->firstOrFail();
+            ImportInstagram::dispatch($import);
+        } catch (Exception $e) {
+            \Log::info($e);
+        }
+
+        return redirect(route('settings'))->with(['status' => [
+            'Import successful! It may take a few minutes to finish.'
+        ]]);
     }
 }

@@ -17,13 +17,13 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | PixelFed Version
+    | Pixelfed Version
     |--------------------------------------------------------------------------
     |
-    | This value is the version of your PixelFed instance.
+    | This value is the version of your Pixelfed instance.
     |
     */
-    'version' => '0.7.10',
+    'version' => '0.9.4',
 
     /*
     |--------------------------------------------------------------------------
@@ -46,7 +46,7 @@ return [
     | default memory_limit php.ini is used for the rest of the app.
     |
     */
-    'memory_limit' => '1024M',
+    'memory_limit' => env('MEMORY_LIMIT', '1024M'),
 
     /*
     |--------------------------------------------------------------------------
@@ -74,17 +74,14 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Enable Google Recaptcha v2
+    | ActivityPub
     |--------------------------------------------------------------------------
     |
-    | Enable/disable recaptcha on login/registration forms. API Keys required.
-    |
     */
-    'recaptcha'         => env('RECAPTCHA_ENABLED', false),
-
-
-    'remote_follow_enabled' => env('REMOTE_FOLLOW', false),
     'activitypub_enabled' => env('ACTIVITY_PUB', false),
+    'ap_delivery_timeout' => env('ACTIVITYPUB_DELIVERY_TIMEOUT', 2.0),
+    'ap_delivery_concurrency' => env('ACTIVITYPUB_DELIVERY_CONCURRENCY', 10),
+    'remote_follow_enabled' => false,
 
     /*
     |--------------------------------------------------------------------------
@@ -198,9 +195,87 @@ return [
     */
     'account_delete_after' => env('ACCOUNT_DELETE_AFTER', false),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Enable Cloud Storage
+    |--------------------------------------------------------------------------
+    |
+    | Store media on object storage like S3, Digital Ocean Spaces, Rackspace
+    |
+    */
+    'cloud_storage' => env('PF_ENABLE_CLOUD', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Max User Limit
+    |--------------------------------------------------------------------------
+    |
+    | Allow a maximum number of user accounts. Default: off
+    |
+    */
+    'max_users' => env('PF_MAX_USERS', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Optimize Images
+    |--------------------------------------------------------------------------
+    |
+    | Resize and optimize image uploads. Default: on
+    |
+    */
+    'optimize_image' => env('PF_OPTIMIZE_IMAGES', true),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Optimize Videos
+    |--------------------------------------------------------------------------
+    |
+    | Resize and optimize video uploads. Default: on
+    |
+    */
+    'optimize_video' => env('PF_OPTIMIZE_VIDEOS', true),
+
+    /*
+    |--------------------------------------------------------------------------
+    | User invites
+    |--------------------------------------------------------------------------
+    |
+    | Allow users to invite others via email. 
+    | Will respect max user limit and prevent invites after the
+    | limit is reached. Default: off
+    |
+    */ 
+    'user_invites' => [
+        'enabled' => false, //env('PF_USER_INVITES', false),
+        'limit' => [
+            'total' => (int) env('PF_USER_INVITES_TOTAL_LIMIT', 0),
+            'daily' => (int) env('PF_USER_INVITES_DAILY_LIMIT', 0),
+            'monthly' => (int) env('PF_USER_INVITES_MONTHLY_LIMIT', 0),
+        ]
+    ],
+
 
     'media_types' => env('MEDIA_TYPES', 'image/jpeg,image/png,image/gif'),
+
     'enforce_account_limit' => env('LIMIT_ACCOUNT_SIZE', true),
-    'ap_inbox' => env('ACTIVITYPUB_INBOX', false),
-    'ap_shared' => env('ACTIVITYPUB_SHAREDINBOX', false),
+
+    'import' => [
+        'instagram' => [
+            'enabled' => false,
+            'limits' => [
+                'posts' => (int) env('IMPORT_INSTAGRAM_POST_LIMIT', 100),
+                'size' => (int) env('IMPORT_INSTAGRAM_SIZE_LIMIT', 250)
+            ]
+        ]
+    ],
+
+    'oauth_enabled' => env('OAUTH_ENABLED', false),
+
+    'sanitizer' => [
+        'restrict_html_types' => env('RESTRICT_HTML_TYPES', true)
+    ],
+
+    'admin' => [
+        'env_editor' => env('ADMIN_ENV_EDITOR', false)
+    ],
 ];

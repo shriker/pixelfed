@@ -20,6 +20,9 @@ class ProfileController extends Controller
     public function show(Request $request, $username)
     {
         $user = Profile::whereUsername($username)->firstOrFail();
+        if($user->domain) {
+            return redirect($user->remote_url);
+        }
         if($user->status != null) {
             return $this->accountCheck($user);
         } else {
@@ -48,7 +51,7 @@ class ProfileController extends Controller
             $settings = $user->user->settings;
         }
 
-        if ($request->wantsJson() && config('pixelfed.activitypub_enabled')) {
+        if ($request->wantsJson() && config('federation.activitypub.enabled')) {
             return $this->showActivityPub($request, $user);
         }
 
@@ -66,18 +69,20 @@ class ProfileController extends Controller
         if ($isPrivate == true || $isBlocked == true) {
             return view('profile.private', compact('user', 'is_following'));
         } 
-
         $is_admin = is_null($user->domain) ? $user->user->is_admin : false;
-        $timeline = $user->statuses()
-              ->whereHas('media')
-              ->whereNull('in_reply_to_id')
-              ->whereNull('reblog_of_id')
-              ->whereIn('visibility', ['public', 'unlisted'])
-              ->orderBy('created_at', 'desc')
-              ->withCount(['comments', 'likes'])
-              ->simplePaginate(21);
-
-        return view('profile.show', compact('user', 'settings', 'owner', 'is_following', 'is_admin', 'timeline'));
+        $profile = $user;
+        $settings = [
+            'crawlable' => $settings->crawlable,
+            'following' => [
+                'count' => $settings->show_profile_following_count,
+                'list' => $settings->show_profile_following
+            ], 
+            'followers' => [
+                'count' => $settings->show_profile_follower_count,
+                'list' => $settings->show_profile_followers
+            ]
+        ];
+        return view('profile.show', compact('user', 'profile', 'settings', 'owner', 'is_following', 'is_admin'));
     }
 
     public function permalinkRedirect(Request $request, $username)
@@ -85,7 +90,7 @@ class ProfileController extends Controller
         $user = Profile::whereUsername($username)->firstOrFail();
         $settings = User::whereUsername($username)->firstOrFail()->settings;
 
-        if ($request->wantsJson() && config('pixelfed.activitypub_enabled')) {
+        if ($request->wantsJson() && config('federation.activitypub.enabled')) {
             return $this->showActivityPub($request, $user);
         }
 
@@ -130,6 +135,7 @@ class ProfileController extends Controller
     {
         switch ($profile->status) {
             case 'disabled':
+            case 'suspended':
             case 'delete':
                 return view('profile.disabled');
                 break;
@@ -144,6 +150,8 @@ class ProfileController extends Controller
 
     public function showActivityPub(Request $request, $user)
     {
+        abort_if(!config('federation.activitypub.enabled'), 404);
+        
         if($user->status != null) {
             return ProfileController::accountCheck($user);
         }
@@ -155,7 +163,9 @@ class ProfileController extends Controller
 
     public function showAtomFeed(Request $request, $user)
     {
-        $profile = $user = Profile::whereUsername($user)->firstOrFail();
+        abort_if(!config('federation.atom.enabled'), 404);
+
+        $profile = $user = Profile::whereNull('status')->whereNull('domain')->whereUsername($user)->whereIsPrivate(false)->firstOrFail();
         if($profile->status != null) {
             return $this->accountCheck($profile);
         }
@@ -187,7 +197,7 @@ class ProfileController extends Controller
                 return view('profile.private', compact('user', 'is_following'));
             }
         }
-        $followers = $profile->followers()->whereNull('status')->orderBy('created_at', 'desc')->simplePaginate(12);
+        $followers = $profile->followers()->whereNull('status')->orderBy('followers.created_at', 'desc')->simplePaginate(12);
         $is_admin = is_null($user->domain) ? $user->user->is_admin : false;
         if ($user->remote_url) {
             $settings = new \StdClass;
@@ -217,7 +227,7 @@ class ProfileController extends Controller
                 return view('profile.private', compact('user', 'is_following'));
             }
         }
-        $following = $profile->following()->whereNull('status')->orderBy('created_at', 'desc')->simplePaginate(12);
+        $following = $profile->following()->whereNull('status')->orderBy('followers.created_at', 'desc')->simplePaginate(12);
         $is_admin = is_null($user->domain) ? $user->user->is_admin : false;
         if ($user->remote_url) {
             $settings = new \StdClass;
@@ -246,6 +256,7 @@ class ProfileController extends Controller
         $timeline = $user->bookmarks()->withCount(['likes','comments'])->orderBy('created_at', 'desc')->simplePaginate(10);
         $is_following = ($owner == false && Auth::check()) ? $user->followedBy(Auth::user()->profile) : false;
         $is_admin = is_null($user->domain) ? $user->user->is_admin : false;
-        return view('profile.show', compact('user', 'settings', 'owner', 'following', 'timeline', 'is_following', 'is_admin'));
+        return view('profile.bookmarks', compact('user', 'profile', 'settings', 'owner', 'following', 'timeline', 'is_following', 'is_admin'));
     }
+
 }

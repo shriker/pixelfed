@@ -30,11 +30,10 @@ class AvatarController extends Controller
             $dir = $path['root'];
             $name = $path['name'];
             $public = $path['storage'];
-            $currentAvatar = storage_path('app/'.$profile->avatar->media_path);
             $loc = $request->file('avatar')->storeAs($public, $name);
 
-            $avatar = Avatar::whereProfileId($profile->id)->firstOrFail();
-            $opath = $avatar->media_path;
+            $avatar = Avatar::firstOrNew(['profile_id' => $profile->id]);
+            $currentAvatar = $avatar->recentlyCreated ? null : storage_path('app/'.$profile->avatar->media_path);
             $avatar->media_path = "$public/$name";
             $avatar->thumb_path = null;
             $avatar->change_count = ++$avatar->change_count;
@@ -42,6 +41,7 @@ class AvatarController extends Controller
             $avatar->save();
 
             Cache::forget("avatar:{$profile->id}");
+            Cache::forget('user:account:id:'.$user->id);
             AvatarOptimize::dispatch($user->profile, $currentAvatar);
         } catch (Exception $e) {
         }
@@ -96,5 +96,34 @@ class AvatarController extends Controller
         }
 
         return $avatarpath;
+    }
+
+    public function deleteAvatar(Request $request)
+    {
+        $user = Auth::user();
+        $profile = $user->profile;
+
+        $avatar = $profile->avatar;
+
+        if($avatar->media_path == 'public/avatars/default.png' || $avatar->thumb_path == 'public/avatars/default.png') {
+            return;
+        }
+
+        if(is_file(storage_path('app/' . $avatar->media_path))) {
+            @unlink(storage_path('app/' . $avatar->media_path));
+        }
+
+        if(is_file(storage_path('app/' . $avatar->thumb_path))) {
+            @unlink(storage_path('app/' . $avatar->thumb_path));
+        }
+
+        $avatar->media_path = 'public/avatars/default.png';
+        $avatar->thumb_path = 'public/avatars/default.png';
+        $avatar->change_count = $avatar->change_count + 1;
+        $avatar->save();
+
+        Cache::forget('avatar:' . $avatar->profile_id);
+
+        return response()->json(200);
     }
 }

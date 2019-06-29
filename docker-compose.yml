@@ -13,35 +13,45 @@ version: '3'
 services:
 
   app:
-    # Uncomment to build a local copy of the image
-    # build: .
+    # Comment to use dockerhub image
+    build: .
     image: pixelfed
-    # If you have a traefik running, uncomment this to expose Pixelfed
+    restart: unless-stopped
+    ## If you have a traefik running, uncomment this to expose Pixelfed
     # labels:
     #   - traefik.enable=true
     #   - traefik.frontend.rule=Host:your.url
     #   - traefik.port=80
+    ## If you have a standard reverse proxy, uncommit this to expose Pixelfed
+    # ports:
+    #   - "127.0.0.1:8080:80"
     env_file:
       - ./.env
     volumes:
       - "app-storage:/var/www/storage"
+      - "app-bootstrap:/var/www/bootstrap"
     networks:
       - external
       - internal
 
-  # Uncomment if you set HORIZON_EMBED to false and wish to run a local worker
-  # worker:
-  #   image: pixelfed
-  #   env_file:
-  #     - ./.env
-  #   volumes:
-  #     - "app-storage:/var/www/storage"
-  #   networks:
-  #     - internal
-  #   command: gosu www-data php artisan horizon
+  worker:  # Comment this whole block if HORIZON_EMBED is true.
+    # Comment to use dockerhub image
+    build: .
+    image: pixelfed
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    volumes:
+      - "app-storage:/var/www/storage"
+      - "app-bootstrap:/var/www/bootstrap"
+    networks:
+      - external  # Required for ActivityPub
+      - internal
+    command: gosu www-data php artisan horizon
     
   db:
-    image: mysql:5.7
+    image: mysql:8.0
+    restart: unless-stopped
     networks:
       - internal
     environment:
@@ -53,7 +63,8 @@ services:
       - "db-data:/var/lib/mysql"
 
   redis:
-    image: redis:4-alpine
+    image: redis:5-alpine
+    restart: unless-stopped
     volumes:
       - "redis-data:/data"
     networks:
@@ -64,6 +75,7 @@ volumes:
   redis-data:
   db-data:
   app-storage:
+  app-bootstrap:  
 
 networks:
   internal:

@@ -12,7 +12,8 @@ class Profile extends Model
 
     protected $dates = ['deleted_at'];
     protected $hidden = ['private_key'];
-    protected $visible = ['username', 'name'];
+    protected $visible = ['id', 'user_id', 'username', 'name'];
+    protected $fillable = ['user_id'];
 
     public function user()
     {
@@ -119,14 +120,16 @@ class Profile extends Model
     {
         return $this->hasOne(Avatar::class)->withDefault([
             'media_path' => 'public/avatars/default.png',
+            'change_count' => 0
         ]);
     }
 
     public function avatarUrl()
     {
-        $url = Cache::remember("avatar:{$this->id}", 1440, function () {
-            $path = optional($this->avatar)->media_path;
-            $version = hash('sha1', $this->avatar->updated_at);
+        $url = Cache::remember('avatar:'.$this->id, now()->addYears(1), function () {
+            $avatar = $this->avatar;
+            $path = $avatar->media_path;
+            $version = hash('sha256', $avatar->change_count);
             $path = "{$path}?v={$version}";
 
             return url(Storage::url($path));
@@ -137,36 +140,20 @@ class Profile extends Model
 
     public function statusCount()
     {
-        return $this->statuses()
-        ->getQuery()
-        ->whereHas('media')
-        ->whereNull('in_reply_to_id')
-        ->whereNull('reblog_of_id')
-        ->count();
+        return Cache::remember('profile:status_count:'.$this->id, now()->addMonths(1), function() {
+            return $this->statuses()
+                ->getQuery()
+                ->whereHas('media')
+                ->whereNull('in_reply_to_id')
+                ->whereNull('reblog_of_id')
+                ->count();
+        });
     }
 
+    // deprecated
     public function recommendFollowers()
     {
-        $follows = $this->following()->pluck('followers.id');
-        $following = $this->following()
-            ->orderByRaw('rand()')
-            ->take(3)
-            ->pluck('following_id');
-        $following->push(Auth::id());
-        $following = Follower::whereNotIn('profile_id', $follows)
-            ->whereNotIn('following_id', $following)
-            ->whereNotIn('following_id', $follows)
-            ->whereIn('profile_id', $following)
-            ->orderByRaw('rand()')
-            ->distinct('id')
-            ->limit(3)
-            ->pluck('following_id');
-        $recommended = [];
-        foreach ($following as $follow) {
-            $recommended[] = self::findOrFail($follow);
-        }
-
-        return $recommended;
+        return collect([]);
     }
 
     public function keyId()
@@ -273,5 +260,22 @@ class Profile extends Model
              })
             ->unique()
             ->toArray();
+    }
+
+    public function circles()
+    {
+        return $this->hasMany(Circle::class);
+    }
+
+    public function hashtags()
+    {
+        return $this->hasManyThrough(
+            Hashtag::class,
+            StatusHashtag::class,
+            'profile_id',
+            'id',
+            'id',
+            'hashtag_id'
+        );
     }
 }

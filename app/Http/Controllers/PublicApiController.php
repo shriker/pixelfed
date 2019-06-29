@@ -19,6 +19,7 @@ use Carbon\Carbon;
 use League\Fractal;
 use App\Transformer\Api\{
     AccountTransformer,
+    RelationshipTransformer,
     StatusTransformer,
 };
 use App\Jobs\StatusPipeline\NewStatusPipeline;
@@ -32,7 +33,6 @@ class PublicApiController extends Controller
 
     public function __construct()
     {
-        $this->middleware('throttle:3000, 30');
         $this->fractal = new Fractal\Manager();
         $this->fractal->setSerializer(new ArraySerializer());
     }
@@ -108,15 +108,16 @@ class PublicApiController extends Controller
             'max_id'    => 'nullable|integer|min:1|max:'.PHP_INT_MAX,
             'limit'     => 'nullable|integer|min:5|max:50'
         ]);
+
         $limit = $request->limit ?? 10;
         $profile = Profile::whereUsername($username)->whereNull('status')->firstOrFail();
-        $status = Status::whereProfileId($profile->id)->findOrFail($postId);
+        $status = Status::whereProfileId($profile->id)->whereCommentsDisabled(false)->findOrFail($postId);
         $this->scopeCheck($profile, $status);
         if($request->filled('min_id') || $request->filled('max_id')) {
             if($request->filled('min_id')) {
                 $replies = $status->comments()
                 ->whereNull('reblog_of_id')
-                ->select('id', 'caption', 'rendered', 'profile_id', 'in_reply_to_id', 'created_at')
+                ->select('id', 'caption', 'is_nsfw', 'rendered', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
                 ->where('id', '>=', $request->min_id)
                 ->orderBy('id', 'desc')
                 ->paginate($limit);
@@ -124,7 +125,7 @@ class PublicApiController extends Controller
             if($request->filled('max_id')) {
                 $replies = $status->comments()
                 ->whereNull('reblog_of_id')
-                ->select('id', 'caption', 'rendered', 'profile_id', 'in_reply_to_id', 'created_at')
+                ->select('id', 'caption', 'is_nsfw', 'rendered', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
                 ->where('id', '<=', $request->max_id)
                 ->orderBy('id', 'desc')
                 ->paginate($limit);
@@ -132,7 +133,7 @@ class PublicApiController extends Controller
         } else {
             $replies = $status->comments()
             ->whereNull('reblog_of_id')
-            ->select('id', 'caption', 'rendered', 'profile_id', 'in_reply_to_id', 'created_at')
+            ->select('id', 'caption', 'is_nsfw', 'rendered', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
             ->orderBy('id', 'desc')
             ->paginate($limit);
         }
@@ -174,13 +175,14 @@ class PublicApiController extends Controller
         switch ($status->scope) {
             case 'public':
             case 'unlisted':
+                break;
             case 'private':
                 $user = Auth::check() ? Auth::user() : false;
-                if($user && $profile->is_private) {
-                    $follows = Follower::whereProfileId($user->profile->id)
-                        ->whereFollowingId($profile->id)
-                        ->exists();
-                    if($follows == false && $profile->id !== $user->profile->id) {
+                if(!$user) {
+                    abort(403);
+                } else {
+                    $follows = $profile->followedBy($user->profile);
+                    if($follows == false && $profile->id !== $user->profile->id && $user->is_admin == false) {
                         abort(404);
                     }
                 }
@@ -202,57 +204,90 @@ class PublicApiController extends Controller
 
     public function publicTimelineApi(Request $request)
     {
-        if(!Auth::check()) {
-            return abort(403);
-        }
-
         $this->validate($request,[
           'page'        => 'nullable|integer|max:40',
-          'min_id'      => 'nullable|integer',
-          'max_id'      => 'nullable|integer',
+          'min_id'      => 'nullable|integer|min:0|max:' . PHP_INT_MAX,
+          'max_id'      => 'nullable|integer|min:0|max:' . PHP_INT_MAX,
           'limit'       => 'nullable|integer|max:20'
         ]);
 
         $page = $request->input('page');
         $min = $request->input('min_id');
         $max = $request->input('max_id');
-        $limit = $request->input('limit') ?? 10;
+        $limit = $request->input('limit') ?? 3;
 
-        // TODO: Use redis for timelines
-        // $timeline = Timeline::build()->local();
-        $pid = Auth::user()->profile->id;
+        $private = Cache::remember('profiles:private', now()->addMinutes(1440), function() {
+            return Profile::whereIsPrivate(true)
+                ->orWhere('unlisted', true)
+                ->orWhere('status', '!=', null)
+                ->pluck('id');
+        });
 
-        $private = Profile::whereIsPrivate(true)->orWhereNotNull('status')->where('id', '!=', $pid)->pluck('id');
-        $filters = UserFilter::whereUserId($pid)
-                  ->whereFilterableType('App\Profile')
-                  ->whereIn('filter_type', ['mute', 'block'])
-                  ->pluck('filterable_id')->toArray();
-        $filtered = array_merge($private->toArray(), $filters);
+        if(Auth::check()) {
+            $pid = Auth::user()->profile->id;
+            $filters = UserFilter::whereUserId($pid)
+                      ->whereFilterableType('App\Profile')
+                      ->whereIn('filter_type', ['mute', 'block'])
+                      ->pluck('filterable_id')->toArray();
+            $filtered = array_merge($private->toArray(), $filters);
+        } else {
+            $filtered = $private->toArray();
+        }
 
         if($min || $max) {
             $dir = $min ? '>' : '<';
             $id = $min ?? $max;
-            $timeline = Status::whereHas('media')
+            $timeline = Status::select(
+                        'id', 
+                        'uri',
+                        'caption',
+                        'rendered',
+                        'profile_id', 
+                        'type',
+                        'in_reply_to_id',
+                        'reblog_of_id',
+                        'is_nsfw',
+                        'scope',
+                        'local',
+                        'reply_count',
+                        'comments_disabled',
+                        'created_at',
+                        'updated_at'
+                      )->where('id', $dir, $id)
+                      ->whereIn('type', ['photo', 'photo:album', 'video', 'video:album'])
                       ->whereLocal(true)
                       ->whereNull('uri')
-                      ->where('id', $dir, $id)
                       ->whereNotIn('profile_id', $filtered)
                       ->whereNull('in_reply_to_id')
                       ->whereNull('reblog_of_id')
                       ->whereVisibility('public')
-                      ->withCount(['comments', 'likes'])
                       ->orderBy('created_at', 'desc')
                       ->limit($limit)
                       ->get();
         } else {
-            $timeline = Status::whereHas('media')
+            $timeline = Status::select(
+                        'id', 
+                        'uri',
+                        'caption',
+                        'rendered',
+                        'profile_id', 
+                        'type',
+                        'in_reply_to_id',
+                        'reblog_of_id',
+                        'is_nsfw',
+                        'scope',
+                        'local',
+                        'reply_count',
+                        'comments_disabled',
+                        'created_at',
+                        'updated_at'
+                      )->whereIn('type', ['photo', 'photo:album', 'video', 'video:album'])
                       ->whereLocal(true)
                       ->whereNull('uri')
                       ->whereNotIn('profile_id', $filtered)
                       ->whereNull('in_reply_to_id')
                       ->whereNull('reblog_of_id')
                       ->whereVisibility('public')
-                      ->withCount(['comments', 'likes'])
                       ->orderBy('created_at', 'desc')
                       ->simplePaginate($limit);
         }
@@ -271,24 +306,32 @@ class PublicApiController extends Controller
 
         $this->validate($request,[
           'page'        => 'nullable|integer|max:40',
-          'min_id'      => 'nullable|integer',
-          'max_id'      => 'nullable|integer',
+          'min_id'      => 'nullable|integer|min:0|max:' . PHP_INT_MAX,
+          'max_id'      => 'nullable|integer|min:0|max:' . PHP_INT_MAX,
           'limit'       => 'nullable|integer|max:20'
         ]);
 
         $page = $request->input('page');
         $min = $request->input('min_id');
         $max = $request->input('max_id');
-        $limit = $request->input('limit') ?? 10;
+        $limit = $request->input('limit') ?? 3;
 
         // TODO: Use redis for timelines
         // $timeline = Timeline::build()->local();
         $pid = Auth::user()->profile->id;
 
-        $following = Follower::whereProfileId($pid)->pluck('following_id');
-        $following->push($pid)->toArray();
+        $following = Cache::remember('profile:following:'.$pid, now()->addMinutes(1440), function() use($pid) {
+            $following = Follower::whereProfileId($pid)->pluck('following_id');
+            return $following->push($pid)->toArray();
+        });
 
-        $private = Profile::whereIsPrivate(true)->orWhereNotNull('status')->where('id', '!=', $pid)->pluck('id');
+        $private = Cache::remember('profiles:private', 1440, function() {
+            return Profile::whereIsPrivate(true)
+                ->orWhere('unlisted', true)
+                ->orWhere('status', '!=', null)
+                ->pluck('id');
+        });
+
         $filters = UserFilter::whereUserId($pid)
                   ->whereFilterableType('App\Profile')
                   ->whereIn('filter_type', ['mute', 'block'])
@@ -298,29 +341,55 @@ class PublicApiController extends Controller
         if($min || $max) {
             $dir = $min ? '>' : '<';
             $id = $min ?? $max;
-            $timeline = Status::whereHas('media')
-                      ->whereLocal(true)
-                      ->whereNull('uri')
+            $timeline = Status::select(
+                        'id', 
+                        'uri',
+                        'caption',
+                        'rendered',
+                        'profile_id', 
+                        'type',
+                        'in_reply_to_id',
+                        'reblog_of_id',
+                        'is_nsfw',
+                        'scope',
+                        'local',
+                        'reply_count',
+                        'comments_disabled',
+                        'created_at',
+                        'updated_at'
+                      )->whereIn('type', ['photo', 'photo:album', 'video', 'video:album'])
                       ->where('id', $dir, $id)
                       ->whereIn('profile_id', $following)
                       ->whereNotIn('profile_id', $filtered)
                       ->whereNull('in_reply_to_id')
                       ->whereNull('reblog_of_id')
                       ->whereIn('visibility',['public', 'unlisted', 'private'])
-                      ->withCount(['comments', 'likes'])
                       ->orderBy('created_at', 'desc')
                       ->limit($limit)
                       ->get();
         } else {
-            $timeline = Status::whereHas('media')
-                      ->whereLocal(true)
-                      ->whereNull('uri')
+            $timeline = Status::select(
+                        'id', 
+                        'uri',
+                        'caption',
+                        'rendered',
+                        'profile_id', 
+                        'type',
+                        'in_reply_to_id',
+                        'reblog_of_id',
+                        'is_nsfw',
+                        'scope',
+                        'local',
+                        'reply_count',
+                        'comments_disabled',
+                        'created_at',
+                        'updated_at'
+                      )->whereIn('type', ['photo', 'photo:album', 'video', 'video:album'])
                       ->whereIn('profile_id', $following)
                       ->whereNotIn('profile_id', $filtered)
                       ->whereNull('in_reply_to_id')
                       ->whereNull('reblog_of_id')
                       ->whereIn('visibility',['public', 'unlisted', 'private'])
-                      ->withCount(['comments', 'likes'])
                       ->orderBy('created_at', 'desc')
                       ->simplePaginate($limit);
         }
@@ -330,4 +399,234 @@ class PublicApiController extends Controller
         return response()->json($res);
 
     }
+
+
+    public function networkTimelineApi(Request $request)
+    {
+        if(!Auth::check()) {
+            return abort(403);
+        }
+
+        $this->validate($request,[
+          'page'        => 'nullable|integer|max:40',
+          'min_id'      => 'nullable|integer|min:0|max:' . PHP_INT_MAX,
+          'max_id'      => 'nullable|integer|min:0|max:' . PHP_INT_MAX,
+          'limit'       => 'nullable|integer|max:20'
+        ]);
+
+        $page = $request->input('page');
+        $min = $request->input('min_id');
+        $max = $request->input('max_id');
+        $limit = $request->input('limit') ?? 3;
+
+        // TODO: Use redis for timelines
+        // $timeline = Timeline::build()->local();
+        $pid = Auth::user()->profile->id;
+
+        $private = Cache::remember('profiles:private', now()->addMinutes(1440), function() {
+            return Profile::whereIsPrivate(true)
+                ->orWhere('unlisted', true)
+                ->orWhere('status', '!=', null)
+                ->pluck('id');
+        });
+        $filters = UserFilter::whereUserId($pid)
+                  ->whereFilterableType('App\Profile')
+                  ->whereIn('filter_type', ['mute', 'block'])
+                  ->pluck('filterable_id')->toArray();
+        $filtered = array_merge($private->toArray(), $filters);
+
+        if($min || $max) {
+            $dir = $min ? '>' : '<';
+            $id = $min ?? $max;
+            $timeline = Status::select(
+                        'id', 
+                        'uri',
+                        'caption',
+                        'rendered',
+                        'profile_id', 
+                        'type',
+                        'in_reply_to_id',
+                        'reblog_of_id',
+                        'is_nsfw',
+                        'scope',
+                        'local',
+                        'reply_count',
+                        'comments_disabled',
+                        'created_at',
+                        'updated_at'
+                      )->where('id', $dir, $id)
+                      ->whereIn('type', ['photo', 'photo:album', 'video', 'video:album'])
+                      ->whereNotIn('profile_id', $filtered)
+                      ->whereNotNull('uri')
+                      ->whereNull('in_reply_to_id')
+                      ->whereNull('reblog_of_id')
+                      ->whereVisibility('public')
+                      ->latest()
+                      ->limit($limit)
+                      ->get();
+        } else {
+            $timeline = Status::select(
+                        'id', 
+                        'uri',
+                        'caption',
+                        'rendered',
+                        'profile_id', 
+                        'type',
+                        'in_reply_to_id',
+                        'reblog_of_id',
+                        'is_nsfw',
+                        'scope',
+                        'local',
+                        'reply_count',
+                        'comments_disabled',
+                        'created_at',
+                        'updated_at'
+                      )->whereIn('type', ['photo', 'photo:album', 'video', 'video:album'])
+                      ->whereNotIn('profile_id', $filtered)
+                      ->whereNull('in_reply_to_id')
+                      ->whereNull('reblog_of_id')
+                      ->whereNotNull('uri')
+                      ->whereVisibility('public')
+                      ->latest()
+                      ->simplePaginate($limit);
+        }
+
+        $fractal = new Fractal\Resource\Collection($timeline, new StatusTransformer());
+        $res = $this->fractal->createData($fractal)->toArray();
+        return response()->json($res);
+
+    }
+
+    public function relationships(Request $request)
+    {
+        abort_if(!Auth::check(), 403);
+
+        $this->validate($request, [
+            'id'    => 'required|array|min:1|max:20',
+            'id.*'  => 'required|integer'
+        ]);
+        $ids = collect($request->input('id'));
+        $filtered = $ids->filter(function($v) { 
+            return $v != Auth::user()->profile->id;
+        });
+        $relations = Profile::findOrFail($filtered->all());
+        $fractal = new Fractal\Resource\Collection($relations, new RelationshipTransformer());
+        $res = $this->fractal->createData($fractal)->toArray();
+        return response()->json($res);
+    }
+
+    public function account(Request $request, $id)
+    {
+        $profile = Profile::whereNull('status')->findOrFail($id);
+        $resource = new Fractal\Resource\Item($profile, new AccountTransformer());
+        $res = $this->fractal->createData($resource)->toArray();
+
+        return response()->json($res);
+    }
+
+    public function accountFollowers(Request $request, $id)
+    {
+        abort_unless(Auth::check(), 403);
+        $profile = Profile::with('user')->whereNull('status')->whereNull('domain')->findOrFail($id);
+        if(Auth::id() != $profile->user_id && $profile->is_private || !$profile->user->settings->show_profile_followers) {
+            return response()->json([]);
+        }
+        $followers = $profile->followers()->orderByDesc('followers.created_at')->paginate(10);
+        $resource = new Fractal\Resource\Collection($followers, new AccountTransformer());
+        $res = $this->fractal->createData($resource)->toArray();
+
+        return response()->json($res);
+    }
+
+    public function accountFollowing(Request $request, $id)
+    {
+        abort_unless(Auth::check(), 403);
+        $profile = Profile::with('user')->whereNull('status')->whereNull('domain')->findOrFail($id);
+        if(Auth::id() != $profile->user_id && $profile->is_private || !$profile->user->settings->show_profile_following) {
+            return response()->json([]);
+        }
+        $following = $profile->following()->orderByDesc('followers.created_at')->paginate(10);
+        $resource = new Fractal\Resource\Collection($following, new AccountTransformer());
+        $res = $this->fractal->createData($resource)->toArray();
+
+        return response()->json($res);
+    }
+
+    public function accountStatuses(Request $request, $id)
+    {
+        $this->validate($request, [
+            'only_media' => 'nullable',
+            'pinned' => 'nullable',
+            'exclude_replies' => 'nullable',
+            'max_id' => 'nullable|integer|min:0|max:' . PHP_INT_MAX,
+            'since_id' => 'nullable|integer|min:0|max:' . PHP_INT_MAX,
+            'min_id' => 'nullable|integer|min:0|max:' . PHP_INT_MAX,
+            'limit' => 'nullable|integer|min:1|max:24'
+        ]);
+
+        $profile = Profile::whereNull('status')->findOrFail($id);
+
+        $limit = $request->limit ?? 9;
+        $max_id = $request->max_id;
+        $min_id = $request->min_id;
+        $scope = $request->only_media == true ? 
+            ['photo', 'photo:album', 'video', 'video:album'] :
+            ['photo', 'photo:album', 'video', 'video:album', 'share', 'reply'];
+       
+        if($profile->is_private) {
+            if(!Auth::check()) {
+                return response()->json([]);
+            }
+            $pid = Auth::user()->profile->id;
+            $following = Cache::remember('profile:following:'.$pid, now()->addMinutes(1440), function() use($pid) {
+                $following = Follower::whereProfileId($pid)->pluck('following_id');
+                return $following->push($pid)->toArray();
+            });
+            $visibility = true == in_array($profile->id, $following) ? ['public', 'unlisted', 'private'] : [];
+        } else {
+            if(Auth::check()) {
+                $pid = Auth::user()->profile->id;
+                $following = Cache::remember('profile:following:'.$pid, now()->addMinutes(1440), function() use($pid) {
+                    $following = Follower::whereProfileId($pid)->pluck('following_id');
+                    return $following->push($pid)->toArray();
+                });
+                $visibility = true == in_array($profile->id, $following) ? ['public', 'unlisted', 'private'] : ['public', 'unlisted'];
+            } else {
+                $visibility = ['public', 'unlisted'];
+            }
+        }
+
+
+        $dir = $min_id ? '>' : '<';
+        $id = $min_id ?? $max_id;
+        $timeline = Status::select(
+            'id', 
+            'uri',
+            'caption',
+            'rendered',
+            'profile_id', 
+            'type',
+            'in_reply_to_id',
+            'reblog_of_id',
+            'is_nsfw',
+            'scope',
+            'local',
+            'created_at',
+            'updated_at'
+          )->whereProfileId($profile->id)
+          ->whereIn('type', $scope)
+          ->whereLocal(true)
+          ->whereNull('uri')
+          ->where('id', $dir, $id)
+          ->whereIn('visibility', $visibility)
+          ->latest()
+          ->limit($limit)
+          ->get();
+
+        $resource = new Fractal\Resource\Collection($timeline, new StatusTransformer());
+        $res = $this->fractal->createData($resource)->toArray();
+
+        return response()->json($res);
+    }
+
 }

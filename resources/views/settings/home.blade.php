@@ -12,7 +12,9 @@
     </div>
     <div class="col-sm-9">
       <p class="lead font-weight-bold mb-0">{{Auth::user()->username}}</p>
-      <p><a href="#" class="font-weight-bold change-profile-photo" data-toggle="collapse" data-target="#avatarCollapse" aria-expanded="false" aria-controls="avatarCollapse">Change Profile Photo</a></p>
+      <p class="">
+        <a href="#" class="font-weight-bold change-profile-photo" data-toggle="collapse" data-target="#avatarCollapse" aria-expanded="false" aria-controls="avatarCollapse">Change Profile Photo</a>
+      </p>
       <div class="collapse" id="avatarCollapse">
         <form method="post" action="/settings/avatar" enctype="multipart/form-data">
         @csrf
@@ -27,6 +29,9 @@
         </div>
         </form>
       </div>
+      <p class="">
+        <a class="font-weight-bold text-muted delete-profile-photo" href="#">Delete Profile Photo</a>
+      </p>
     </div>
   </div>
   <form method="post">
@@ -58,23 +63,7 @@
         </p>
       </div>
     </div>
-    <div class="pt-5">
-      <p class="font-weight-bold text-muted text-center">Private Information</p>
-    </div>
-    <div class="form-group row">
-      <label for="email" class="col-sm-3 col-form-label font-weight-bold text-right">Email</label>
-      <div class="col-sm-9">
-        <input type="email" class="form-control" id="email" name="email" placeholder="Email Address" value="{{Auth::user()->email}}">
-        <p class="help-text small text-muted font-weight-bold">
-          @if(Auth::user()->email_verified_at)
-          <span class="text-success">Verified</span> {{Auth::user()->email_verified_at->diffForHumans()}}
-          @else
-          <span class="text-danger">Unverified</span> You need to <a href="/i/verify-email">verify your email</a>.
-          @endif
-        </p>
-      </div>
-    </div>
-    <div class="pt-5">
+    <div class="pt-3">
       <p class="font-weight-bold text-muted text-center">Storage Usage</p>
     </div>
     <div class="form-group row">
@@ -95,8 +84,7 @@
     </div>
     <hr>
     <div class="form-group row">
-      <div class="col-12 d-flex align-items-center justify-content-between">
-        <a class="font-weight-bold" href="{{route('settings.remove.temporary')}}">Temporarily Disable Account</a>
+      <div class="col-12 text-right">
         <button type="submit" class="btn btn-primary font-weight-bold float-right">Submit</button>
       </div>
     </div>
@@ -107,12 +95,8 @@
 @push('scripts')
 <script type="text/javascript">
 
-  $(document).on('click', '.modal-close', function(e) {
-    swal.close();
-  });
-
-  $('#bio').on('change keyup paste', function(e) {
-    let el = $(this);
+$(document).ready(function() {
+    let el = $('#bio');
     let len = el.val().length;
     let limit = el.data('max-length');
 
@@ -128,21 +112,57 @@
     }
 
     $('.bio-counter').html(val);
-  });
 
-  $('#maxAvatarSize').text(filesize({{config('pixelfed.max_avatar_size') * 1024}}, {round: 0}));
+    $('#bio').on('change keyup paste', function(e) {
+      let el = $(this);
+      let len = el.val().length;
+      let limit = el.data('max-length');
 
-  $('#avatarInput').on('change', function(e) {
-      var file = document.getElementById('avatarInput').files[0];
-      var reader = new FileReader();
-
-      reader.addEventListener("load", function() {
-          $('#previewAvatar').html('<img src="' + reader.result + '" class="rounded-circle box-shadow mb-3" width="100%" height="100%"/>');
-      }, false);
-
-      if (file) {
-          reader.readAsDataURL(file);
+      if(len > 100) {
+        el.attr('rows', '4');
       }
-  });
+
+      let val = len + ' / ' + limit;
+
+      if(len > limit) {
+        let diff = len - limit;
+        val = '<span class="text-danger">-' + diff + '</span> / ' + limit;
+      }
+
+      $('.bio-counter').html(val);
+    });
+
+    $(document).on('click', '.modal-close', function(e) {
+      swal.close();
+    });
+
+    $('#maxAvatarSize').text(filesize({{config('pixelfed.max_avatar_size') * 1024}}, {round: 0}));
+
+    $('#avatarInput').on('change', function(e) {
+        var file = document.getElementById('avatarInput').files[0];
+        var reader = new FileReader();
+
+        reader.addEventListener("load", function() {
+            $('#previewAvatar').html('<img src="' + reader.result + '" class="rounded-circle box-shadow mb-3" width="100%" height="100%"/>');
+        }, false);
+
+        if (file) {
+            reader.readAsDataURL(file);
+        }
+    });
+
+    $('.delete-profile-photo').on('click', function(e) {
+      e.preventDefault();
+      if(window.confirm('Are you sure you want to delete your profile photo.') == false) {
+        return;
+      }
+      axios.delete('/settings/avatar').then(res => {
+        window.location.href = window.location.href;
+      }).catch(err => {
+        swal('Error', 'An error occured, please try again later', 'error');
+      });
+    });
+})
+
 </script>
 @endpush

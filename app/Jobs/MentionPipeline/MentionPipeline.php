@@ -19,6 +19,13 @@ class MentionPipeline implements ShouldQueue
     protected $mention;
 
     /**
+     * Delete the job if its models no longer exist.
+     *
+     * @var bool
+     */
+    public $deleteWhenMissingModels = true;
+
+    /**
      * Create a new job instance.
      *
      * @return void
@@ -43,7 +50,7 @@ class MentionPipeline implements ShouldQueue
 
         $exists = Notification::whereProfileId($target)
                   ->whereActorId($actor->id)
-                  ->whereAction('mention')
+                  ->whereIn('action', ['mention', 'comment'])
                   ->whereItemId($status->id)
                   ->whereItemType('App\Status')
                   ->count();

@@ -7,13 +7,14 @@ use App\Http\Controllers\{
     Controller,
     AvatarController
 };
-use Auth, Cache, URL;
+use Auth, Cache, Storage, URL;
 use Carbon\Carbon;
 use App\{
     Avatar,
     Notification,
     Media,
-    Profile
+    Profile,
+    Status
 };
 use App\Transformer\Api\{
     AccountTransformer,
@@ -23,6 +24,7 @@ use App\Transformer\Api\{
 };
 use League\Fractal;
 use League\Fractal\Serializer\ArraySerializer;
+use League\Fractal\Pagination\IlluminatePaginatorAdapter;
 use App\Jobs\AvatarPipeline\AvatarOptimize;
 use App\Jobs\ImageOptimizePipeline\ImageOptimize;
 use App\Jobs\VideoPipeline\{
@@ -30,6 +32,7 @@ use App\Jobs\VideoPipeline\{
     VideoPostProcess,
     VideoThumbnail
 };
+use App\Services\NotificationService;
 
 class BaseApiController extends Controller
 {
@@ -42,26 +45,32 @@ class BaseApiController extends Controller
         $this->fractal->setSerializer(new ArraySerializer());
     }
 
-    public function notification(Request $request, $id)
-    {
-        $notification = Notification::findOrFail($id);
-        $resource = new Fractal\Resource\Item($notification, new NotificationTransformer());
-        $res = $this->fractal->createData($resource)->toArray();
-
-        return response()->json($res);
-    }
-
     public function notifications(Request $request)
     {
         $pid = Auth::user()->profile->id;
-        $timeago = Carbon::now()->subMonths(6);
-        $notifications = Notification::with('actor')
-            ->whereProfileId($pid)
-            ->whereDate('created_at', '>', $timeago)
-            ->orderBy('created_at','desc')
-            ->paginate(10);
-        $resource = new Fractal\Resource\Collection($notifications, new NotificationTransformer());
-        $res = $this->fractal->createData($resource)->toArray();
+        $pg = $request->input('pg');
+        if($pg == true) {
+            $timeago = Carbon::now()->subMonths(6);
+            $notifications = Notification::whereProfileId($pid)
+                ->whereDate('created_at', '>', $timeago)
+                ->latest()
+                ->simplePaginate(10);
+            $resource = new Fractal\Resource\Collection($notifications, new NotificationTransformer());
+            $res = $this->fractal->createData($resource)->toArray();
+        } else {
+            $this->validate($request, [
+                'page' => 'nullable|integer|min:1',
+                'limit' => 'nullable|integer|min:1|max:10'
+            ]);
+            $limit = $request->input('limit') ?? 10;
+            $page = $request->input('page') ?? 1;
+            if($page > 3) {
+                return response()->json([]);
+            }
+            $end = (int) $page * $limit;
+            $start = (int) $end - $limit;
+            $res = NotificationService::get($pid, $start, $end);
+        }
 
         return response()->json($res);
     }
@@ -97,13 +106,46 @@ class BaseApiController extends Controller
 
     public function accountStatuses(Request $request, $id)
     {
-        $pid = Auth::user()->profile->id;
-        $profile = Profile::findOrFail($id);
-        $statuses = $profile->statuses(); 
-        if($pid === $profile->id) {
-            $statuses = $statuses->orderBy('id', 'desc')->paginate(20);
+        $this->validate($request, [
+            'only_media' => 'nullable',
+            'pinned' => 'nullable',
+            'exclude_replies' => 'nullable',
+            'max_id' => 'nullable|integer|min:1',
+            'since_id' => 'nullable|integer|min:1',
+            'min_id' => 'nullable|integer|min:1',
+            'limit' => 'nullable|integer|min:1|max:24'
+        ]);
+        $limit = $request->limit ?? 20;
+        $max_id = $request->max_id ?? false;
+        $min_id = $request->min_id ?? false;
+        $since_id = $request->since_id ?? false;
+        $only_media = $request->only_media ?? false;
+        $user = Auth::user();
+        $account = Profile::findOrFail($id);
+        $statuses = $account->statuses()->getQuery(); 
+        if($only_media == true) {
+            $statuses = $statuses
+                ->whereHas('media')
+                ->whereNull('in_reply_to_id')
+                ->whereNull('reblog_of_id');
+        }
+        if($id == $account->id && !$max_id && !$min_id && !$since_id) {
+            $statuses = $statuses->orderBy('id', 'desc')
+                ->paginate($limit);
+        } else if($since_id) {
+            $statuses = $statuses->where('id', '>', $since_id)
+                ->orderBy('id', 'DESC')
+                ->paginate($limit);
+        } else if($min_id) {
+            $statuses = $statuses->where('id', '>', $min_id)
+                ->orderBy('id', 'ASC')
+                ->paginate($limit);
+        } else if($max_id) {
+            $statuses = $statuses->where('id', '<', $max_id)
+                ->orderBy('id', 'DESC')
+                ->paginate($limit);
         } else {
-            $statuses = $statuses->whereVisibility('public')->orderBy('id', 'desc')->paginate(20);
+            $statuses = $statuses->whereVisibility('public')->orderBy('id', 'desc')->paginate($limit);
         }
         $resource = new Fractal\Resource\Collection($statuses, new StatusTransformer());
         $res = $this->fractal->createData($resource)->toArray();
@@ -180,6 +222,8 @@ class BaseApiController extends Controller
                     'max:' . config('pixelfed.max_photo_size'),
                 ];
               },
+              'filter_name' => 'nullable|string|max:24',
+              'filter_class' => 'nullable|alpha_dash|max:24'
         ]);
 
         $user = Auth::user();
@@ -221,14 +265,15 @@ class BaseApiController extends Controller
         $media->original_sha256 = $hash;
         $media->size = $photo->getSize();
         $media->mime = $photo->getMimeType();
-        $media->filter_class = null;
-        $media->filter_name = null;
+        $media->filter_class = $request->input('filter_class');
+        $media->filter_name = $request->input('filter_name');
         $media->save();
 
         $url = URL::temporarySignedRoute(
             'temp-media', now()->addHours(1), ['profileId' => $profile->id, 'mediaId' => $media->id]
         );
 
+        $preview_url = $url;
         switch ($media->mime) {
             case 'image/jpeg':
             case 'image/png':
@@ -237,31 +282,51 @@ class BaseApiController extends Controller
 
             case 'video/mp4':
                 VideoThumbnail::dispatch($media);
+                $preview_url = '/storage/no-preview.png';
+                $url = '/storage/no-preview.png';
                 break;
             
             default:
                 break;
         }
 
-        $res = [
-            'id'          => $media->id,
-            'type'        => $media->activityVerb(),
-            'url'         => $url,
-            'remote_url'  => null,
-            'preview_url' => $url,
-            'text_url'    => null,
-            'meta'        => $media->metadata,
-            'description' => null,
-        ];
-
+        $resource = new Fractal\Resource\Item($media, new MediaTransformer());
+        $res = $this->fractal->createData($resource)->toArray();
+        $res['preview_url'] = $preview_url;
+        $res['url'] = $url;
         return response()->json($res);
+    }
+
+    public function deleteMedia(Request $request)
+    {
+        $this->validate($request, [
+            'id' => 'required|integer|min:1|exists:media,id'
+        ]);
+
+        $media = Media::whereNull('status_id')
+            ->whereUserId(Auth::id())
+            ->findOrFail($request->input('id'));
+
+        Storage::delete($media->media_path);
+        Storage::delete($media->thumbnail_path);
+
+        $media->forceDelete();
+
+        return response()->json([
+            'msg' => 'Successfully deleted',
+            'code' => 200
+        ]);
     }
 
     public function verifyCredentials(Request $request)
     {
-        $profile = Auth::user()->profile;
-        $resource = new Fractal\Resource\Item($profile, new AccountTransformer());
-        $res = $this->fractal->createData($resource)->toArray();
+        $id = Auth::id();
+
+        $res = Cache::remember('user:account:id:'.$id, now()->addHours(6), function() use($id) {
+            $profile = Profile::whereNull('status')->whereUserId($id)->firstOrFail();
+            $resource = new Fractal\Resource\Item($profile, new AccountTransformer());
+            return $this->fractal->createData($resource)->toArray();
+        });
 
         return response()->json($res);
     }

@@ -9,6 +9,9 @@
 
 namespace App\Util\Lexer;
 
+use Illuminate\Support\Str;
+use App\Status;
+
 /**
  * Twitter Extractor Class.
  *
@@ -119,7 +122,7 @@ class Extractor extends Regex
             $hashtagsOnly[] = $hashtagWithIndex['hashtag'];
         }
 
-        return $hashtagsOnly;
+        return array_slice($hashtagsOnly, 0, Status::MAX_HASHTAGS);
     }
 
     /**
@@ -132,12 +135,6 @@ class Extractor extends Regex
     public function extractCashtags($tweet = null)
     {
         $cashtagsOnly = [];
-        $cashtagsWithIndices = $this->extractCashtagsWithIndices($tweet);
-
-        foreach ($cashtagsWithIndices as $cashtagWithIndex) {
-            $cashtagsOnly[] = $cashtagWithIndex['cashtag'];
-        }
-
         return $cashtagsOnly;
     }
 
@@ -157,7 +154,7 @@ class Extractor extends Regex
             $urlsOnly[] = $urlWithIndex['url'];
         }
 
-        return $urlsOnly;
+        return array_slice($urlsOnly, 0, Status::MAX_LINKS);
     }
 
     /**
@@ -275,7 +272,7 @@ class Extractor extends Regex
         }
 
         if (!$checkUrlOverlap) {
-            return $tags;
+            return array_slice($tags, 0, Status::MAX_HASHTAGS);
         }
 
         // check url overlap
@@ -290,7 +287,7 @@ class Extractor extends Regex
             $validTags[] = $entity;
         }
 
-        return $validTags;
+        return array_slice($validTags, 0, Status::MAX_HASHTAGS);
     }
 
     /**
@@ -388,7 +385,7 @@ class Extractor extends Regex
             }
         }
 
-        return $urls;
+        return array_slice($urls, 0, Status::MAX_LINKS);
     }
 
     /**
@@ -413,7 +410,7 @@ class Extractor extends Regex
             $usernamesOnly[] = $mention;
         }
 
-        return $usernamesOnly;
+        return array_slice($usernamesOnly, 0, Status::MAX_MENTIONS);
     }
 
     /**
@@ -452,8 +449,9 @@ class Extractor extends Regex
             list($all, $before, $at, $username, $list_slug, $outer) = array_pad($match, 6, ['', 0]);
             $start_position = $at[1] > 0 ? StringUtils::strlen(substr($tweet, 0, $at[1])) : $at[1];
             $end_position = $start_position + StringUtils::strlen($at[0]) + StringUtils::strlen($username[0]);
+            $screenname = trim($all[0]) == '@'.$username[0] ? $username[0] : trim($all[0]);
             $entity = [
-                'screen_name' => $username[0],
+                'screen_name' => $screenname,
                 'list_slug'   => $list_slug[0],
                 'indices'     => [$start_position, $end_position],
             ];
@@ -469,7 +467,7 @@ class Extractor extends Regex
             $results[] = $entity;
         }
 
-        return $results;
+        return array_slice($results, 0, Status::MAX_MENTIONS);
     }
 
     /**

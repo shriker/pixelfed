@@ -1,4 +1,4 @@
-  <div class="col-12 col-md-3 py-3" style="border-right:1px solid #ccc;">
+  <div class="col-12 col-md-3 py-3 d-none d-md-block" style="border-right:1px solid #ccc;">
     <ul class="nav flex-column settings-nav">
       <li class="nav-item pl-3 {{request()->is('site/about')?'active':''}}">
         <a class="nav-link font-weight-light text-muted" href="{{route('site.about')}}">{{__('site.about')}}</a>
@@ -28,6 +28,11 @@
       <li class="nav-item">
         <hr>
       </li>
+      @if(config('instance.contact.enabled') || config('instance.email'))
+      <li class="nav-item pl-3 {{request()->is('site/contact')?'active':''}}">
+        <a class="nav-link font-weight-light text-muted" href="{{route('site.contact')}}">{{__('site.contact-us')}}</a>
+      </li>
+      @endif
       <li class="nav-item pl-3 {{request()->is('site/terms')?'active':''}}">
         <a class="nav-link font-weight-light text-muted" href="{{route('site.terms')}}">{{__('site.terms')}}</a>
       </li>

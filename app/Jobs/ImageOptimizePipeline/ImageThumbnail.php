@@ -18,6 +18,13 @@ class ImageThumbnail implements ShouldQueue
     protected $media;
 
     /**
+     * Delete the job if its models no longer exist.
+     *
+     * @var bool
+     */
+    public $deleteWhenMissingModels = true;
+    
+    /**
      * Create a new job instance.
      *
      * @return void
@@ -35,6 +42,9 @@ class ImageThumbnail implements ShouldQueue
     public function handle()
     {
         $media = $this->media;
+        if(!$media) {
+            return;
+        }
         $path = storage_path('app/'.$media->media_path);
         if (!is_file($path)) {
             return;

@@ -22,6 +22,13 @@ class FollowActivityPubDeliver implements ShouldQueue
     protected $followRequest;
 
     /**
+     * Delete the job if its models no longer exist.
+     *
+     * @var bool
+     */
+    public $deleteWhenMissingModels = true;
+    
+    /**
      * Create a new job instance.
      *
      * @return void
@@ -42,7 +49,7 @@ class FollowActivityPubDeliver implements ShouldQueue
         $actor = $follow->actor;
         $target = $follow->target;
 
-        if($target->domain == null || $target->inbox_url == null) {
+        if($target->domain == null || $target->inbox_url == null || !$actor->private_key) {
         	return;
         }
 

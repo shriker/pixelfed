@@ -41,7 +41,7 @@ class Inbox
 
     public function handleVerb()
     {
-        $verb = $this->payload['type'];
+        $verb = (string) $this->payload['type'];
         switch ($verb) {
             case 'Create':
                 $this->handleCreateActivity();
@@ -122,16 +122,21 @@ class Inbox
     {
         $activity = $this->payload['object'];
         $actor = $this->actorFirstOrCreate($this->payload['actor']);
+        if(!$actor || $actor->domain == null) {
+            return;
+        }
+
         $inReplyTo = $activity['inReplyTo'];
         $url = $activity['id'];
         
-        if(!Helpers::statusFirstOrFetch($url, true)) {
-            return;
-        }
+        Helpers::statusFirstOrFetch($url, true);
+        return;
     }
 
     public function handleNoteCreate()
     {
+        return;
+
         $activity = $this->payload['object'];
         $actor = $this->actorFirstOrCreate($this->payload['actor']);
         if(!$actor || $actor->domain == null) {
@@ -139,7 +144,6 @@ class Inbox
         }
 
         if(Helpers::userInAudience($this->profile, $this->payload) == false) {
-            //Log::error('AP:inbox:userInAudience:false - Activity#'.$this->logger->id);
             return;
         }
 
@@ -147,21 +151,8 @@ class Inbox
         if(Status::whereUrl($url)->exists()) {
             return;
         }
-
-        $status = DB::transaction(function() use($activity, $actor, $url) {
-            $caption = str_limit(strip_tags($activity['content']), config('pixelfed.max_caption_length'));
-            $status = new Status;
-            $status->profile_id = $actor->id;
-            $status->caption = strip_tags($caption);
-            $status->rendered = Purify::clean($caption);
-            $status->visibility = $status->scope = 'public';
-            $status->uri = $url;
-            $status->url = $url;
-            $status->save();
-            return $status;
-        });
-
-        Helpers::importNoteAttachment($activity, $status);
+        Helpers::statusFetch($url);
+        return;
     }
 
     public function handleFollowActivity()
@@ -185,32 +176,26 @@ class Inbox
                 'following_id' => $target->id,
                 'local_profile' => empty($actor->domain)
             ]);
-            if($follower->wasRecentlyCreated == false) {
-                return;
+            if($follower->wasRecentlyCreated == true) {
+                // send notification
+                Notification::firstOrCreate([
+                    'profile_id' => $target->id,
+                    'actor_id' => $actor->id,
+                    'action' => 'follow',
+                    'message' => $follower->toText(),
+                    'rendered' => $follower->toHtml(),
+                    'item_id' => $target->id,
+                    'item_type' => 'App\Profile'
+                ]);
             }
-            // send notification
-            Notification::firstOrCreate([
-                'profile_id' => $target->id,
-                'actor_id' => $actor->id,
-                'action' => 'follow',
-                'message' => $follower->toText(),
-                'rendered' => $follower->toHtml(),
-                'item_id' => $target->id,
-                'item_type' => 'App\Profile'
-            ]);
-
+            $payload = $this->payload;
             // send Accept to remote profile
             $accept = [
                 '@context' => 'https://www.w3.org/ns/activitystreams',
                 'id'       => $target->permalink().'#accepts/follows/' . $follower->id,
                 'type'     => 'Accept',
                 'actor'    => $target->permalink(),
-                'object'   => [
-                    'id' => $actor->permalink('#follows/'.$target->id),
-                    'type'  => 'Follow',
-                    'actor' => $actor->permalink(),
-                    'object' => $target->permalink()
-                ]
+                'object'   => $payload
             ];
             Helpers::sendSignedObject($target, $actor->inbox_url, $accept);
         }
@@ -220,21 +205,27 @@ class Inbox
     {
         $actor = $this->actorFirstOrCreate($this->payload['actor']);
         $activity = $this->payload['object'];
+
         if(!$actor || $actor->domain == null) {
             return;
         }
+
         if(Helpers::validateLocalUrl($activity) == false) {
             return;
         }
-        $parent = Helpers::statusFirstOrFetch($activity, true);
-        if(!$parent) {
+
+        $parent = Helpers::statusFetch($activity);
+
+        if(empty($parent)) {
             return;
         }
+
         $status = Status::firstOrCreate([
             'profile_id' => $actor->id,
             'reblog_of_id' => $parent->id,
-            'type' => 'reply'
+            'type' => 'share'
         ]);
+
         Notification::firstOrCreate([
             'profile_id' => $parent->profile->id,
             'actor_id' => $actor->id,
@@ -244,45 +235,77 @@ class Inbox
             'item_id' => $parent->id,
             'item_type' => 'App\Status'
         ]);
+
+        $parent->reblogs_count = $parent->shares()->count();
+        $parent->save();
     }
 
     public function handleAcceptActivity()
     {
-
+        $actor = $this->payload['actor'];
+        $obj = $this->payload['object'];
+        switch ($obj['type']) {
+            case 'Follow':
+                $accept = [
+                    '@context' => 'https://www.w3.org/ns/activitystreams',
+                    'id'       => $target->permalink().'#accepts/follows/' . $follower->id,
+                    'type'     => 'Accept',
+                    'actor'    => $target->permalink(),
+                    'object'   => [
+                        'id' => $actor->permalink('#follows/'.$target->id),
+                        'type'  => 'Follow',
+                        'actor' => $actor->permalink(),
+                        'object' => $target->permalink()
+                    ]
+                ];
+                break;
+            
+            default:
+                # code...
+                break;
+        }
     }
 
     public function handleDeleteActivity()
     {
         $actor = $this->payload['actor'];
         $obj = $this->payload['object'];
+        abort_if(!Helpers::validateUrl($obj), 400);
         if(is_string($obj) && Helpers::validateUrl($obj)) {
             // actor object detected
             // todo delete actor
-        } else if (is_array($obj) && isset($obj['type']) && $obj['type'] == 'Tombstone') {
-            // tombstone detected
-            $status = Status::whereUri($obj['id'])->firstOrFail();
-            $status->forceDelete();
+            return;
+        } else if (Helpers::validateUrl($obj['id']) && Helpers::validateObject($obj) && $obj['type'] == 'Tombstone') {
+            // todo delete status or object
+            return;
         }
     }
 
     public function handleLikeActivity()
     {
         $actor = $this->payload['actor'];
+
+        abort_if(!Helpers::validateUrl($actor), 400);
+
         $profile = self::actorFirstOrCreate($actor);
         $obj = $this->payload['object'];
-        if(Helpers::validateLocalUrl($obj) == false) {
+        abort_if(!Helpers::validateLocalUrl($obj), 400);
+        $status = Helpers::statusFirstOrFetch($obj);
+        if(!$status || !$profile) {
             return;
         }
-        $status = Helpers::statusFirstOrFetch($obj);
         $like = Like::firstOrCreate([
             'profile_id' => $profile->id,
             'status_id' => $status->id
         ]);
 
-        if($like->wasRecentlyCreated == false) {
-            return;
+        if($like->wasRecentlyCreated == true) {
+            $status->likes_count = $status->likes()->count();
+            $status->save();
+            LikePipeline::dispatch($like);
         }
-        LikePipeline::dispatch($like);
+
+        return;
     }
 
 
@@ -298,27 +321,56 @@ class Inbox
         $obj = $this->payload['object'];
 
         switch ($obj['type']) {
-            case 'Like':
-                $status = Helpers::statusFirstOrFetch($obj['object']);
-                Like::whereProfileId($profile->id)
-                    ->whereStatusId($status->id)
-                    ->forceDelete();
+            case 'Accept':
                 break;
                 
             case 'Announce':
-                $parent = Helpers::statusFirstOrFetch($obj['object']);
-                $status = Status::whereProfileId($profile->id)
-                    ->whereReblogOfId($parent->id)
-                    ->firstOrFail();
-                Notification::whereProfileId($parent->profile->id)
+                $obj = $obj['object'];
+                abort_if(!Helpers::validateLocalUrl($obj), 400);
+                $status = Helpers::statusFetch($obj);
+                if(!$status) {
+                    return;
+                }
+                Status::whereProfileId($profile->id)
+                    ->whereReblogOfId($status->id)
+                    ->forceDelete();
+                Notification::whereProfileId($status->profile->id)
                     ->whereActorId($profile->id)
                     ->whereAction('share')
+                    ->whereItemId($status->reblog_of_id)
+                    ->whereItemType('App\Status')
+                    ->forceDelete();
+                break;
+
+            case 'Block':
+                break;
+
+            case 'Follow':
+                $following = self::actorFirstOrCreate($obj['object']);
+                if(!$following) {
+                    return;
+                }
+                Follower::whereProfileId($profile->id)
+                    ->whereFollowingId($following->id)
+                    ->delete();
+                break;
+                
+            case 'Like':
+                $status = Helpers::statusFirstOrFetch($obj['object']);
+                if(!$status) {
+                    return;
+                }
+                Like::whereProfileId($profile->id)
+                    ->whereStatusId($status->id)
+                    ->forceDelete();
+                Notification::whereProfileId($status->profile->id)
+                    ->whereActorId($profile->id)
+                    ->whereAction('like')
                     ->whereItemId($status->id)
                     ->whereItemType('App\Status')
                     ->forceDelete();
-                $status->forceDelete();
                 break;
         }
-
+        return;
     }
 }

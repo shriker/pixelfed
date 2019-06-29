@@ -14,11 +14,13 @@
 			>
 				<b-carousel-slide v-for="(media, index) in status.media_attachments" :key="media.id + '-media'">
 
-					<video v-if="media.type == 'Video'" slot="img" class="embed-responsive-item" preload="none" controls loop :alt="media.description" width="100%" height="100%">
+					<video v-if="media.type == 'Video'" slot="img" class="embed-responsive-item" preload="none" controls loop :alt="media.description" width="100%" height="100%" :poster="media.preview_url">
 						<source :src="media.url" :type="media.mime">
 					</video>
 
-					<img v-else-if="media.type == 'Image'" slot="img" class="d-block img-fluid w-100" :src="media.url" :alt="media.description" :title="media.description">
+					<div v-else-if="media.type == 'Image'" slot="img" :title="media.description">
+						<img :class="media.filter_class + ' d-block img-fluid w-100'" :src="media.url" :alt="media.description" loading="lazy">
+					</div>
 
 					<p v-else class="text-center p-0 font-weight-bold text-white">Error: Problem rendering preview.</p>
 
@@ -36,11 +38,13 @@
 				>
 			<b-carousel-slide v-for="(media, index) in status.media_attachments" :key="media.id + '-media'">
 
-				<video v-if="media.type == 'Video'" slot="img" class="embed-responsive-item" preload="none" controls loop :alt="media.description" width="100%" height="100%">
+				<video v-if="media.type == 'Video'" slot="img" class="embed-responsive-item" preload="none" controls loop :title="media.description" width="100%" height="100%" :poster="media.preview_url">
 					<source :src="media.url" :type="media.mime">
 				</video>
 
-				<img v-else-if="media.type == 'Image'" slot="img" class="d-block img-fluid w-100" :src="media.url" :alt="media.description" :title="media.description">
+				<div v-else-if="media.type == 'Image'" slot="img" :title="media.description">
+					<img :class="media.filter_class + ' d-block img-fluid w-100'" :src="media.url" :alt="media.description" loading="lazy">
+				</div>
 
 				<p v-else class="text-center p-0 font-weight-bold text-white">Error: Problem rendering preview.</p>
 

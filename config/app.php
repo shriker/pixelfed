@@ -150,7 +150,6 @@ return [
         /*
          * Package Service Providers...
          */
-        Greggilbert\Recaptcha\RecaptchaServiceProvider::class,
         Jackiedo\DotenvEditor\DotenvEditorServiceProvider::class,
 
         /*
@@ -159,6 +158,7 @@ return [
         App\Providers\AppServiceProvider::class,
         App\Providers\AuthServiceProvider::class,
         // App\Providers\BroadcastServiceProvider::class,
+        App\Providers\HorizonServiceProvider::class,
         App\Providers\EventServiceProvider::class,
         App\Providers\RouteServiceProvider::class,
 
@@ -211,7 +211,6 @@ return [
         'Validator'    => Illuminate\Support\Facades\Validator::class,
         'View'         => Illuminate\Support\Facades\View::class,
 
-        'Recaptcha'    => Greggilbert\Recaptcha\Facades\Recaptcha::class,
         'DotenvEditor' => Jackiedo\DotenvEditor\Facades\DotenvEditor::class,
         'PrettyNumber' => App\Util\Lexer\PrettyNumber::class,
         'Purify'       => Stevebauman\Purify\Facades\Purify::class,

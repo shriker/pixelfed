@@ -8,7 +8,10 @@ import VueTimeago from 'vue-timeago';
 Vue.use(BootstrapVue);
 Vue.use(InfiniteLoading);
 Vue.use(Loading);
-Vue.use(VueTimeago);
+Vue.use(VueTimeago, {
+  name: 'Timeago',
+  locale: 'en'
+});
 
 pixelfed.readmore = () => {
   $('.read-more').each(function(k,v) {
@@ -18,10 +21,10 @@ pixelfed.readmore = () => {
         return;
       }
       el.readmore({
-        collapsedHeight: 44,
-        heightMargin: 20,
-        moreLink: '<a href="#" class="font-weight-bold small">Read more</a>',
-        lessLink: '<a href="#" class="font-weight-bold small">Hide</a>',
+        collapsedHeight: 45,
+        heightMargin: 48,
+        moreLink: '<a href="#" class="d-block small text-muted text-center">Read more ...</a>',
+        lessLink: '<a href="#" class="d-block small text-muted text-center">Hide</a>',
       });
   });
 };
@@ -32,17 +35,15 @@ try {
 } catch (e) {
 }
 
-window.InfiniteScroll = require('infinite-scroll');
 window.filesize = require('filesize');
-window.Plyr = require('plyr');
+// window.Plyr = require('plyr');
 import swal from 'sweetalert';
 
-require('./components/localstorage');
-require('./components/likebutton');
-require('./components/commentform');
-require('./components/searchform');
-require('./components/bookmarkform');
-require('./components/statusform');
+// require('./components/localstorage');
+// require('./components/commentform');
+//require('./components/searchform');
+// require('./components/bookmarkform');
+// require('./components/statusform');
 //require('./components/embed');
 //require('./components/notifications');
 
@@ -65,70 +66,41 @@ require('./components/statusform');
 // Initialize Notification Helper
 window.pixelfed.n = {};
 
-Vue.component(
-    'photo-presenter',
-    require('./components/presenter/PhotoPresenter.vue').default
-);
-
-Vue.component(
-    'video-presenter',
-    require('./components/presenter/VideoPresenter.vue').default
-);
-
-Vue.component(
-    'photo-album-presenter',
-    require('./components/presenter/PhotoAlbumPresenter.vue').default
-);
-
-Vue.component(
-    'video-album-presenter',
-    require('./components/presenter/VideoAlbumPresenter.vue').default
-);
-
-Vue.component(
-    'mixed-album-presenter',
-    require('./components/presenter/MixedAlbumPresenter.vue').default
-);
-
 // Vue.component(
-//     'micro',
-//     require('./components/Micro.vue').default
-// );
-
-Vue.component(
-    'follow-suggestions',
-    require('./components/FollowSuggestions.vue').default
-);
-
-Vue.component(
-    'discover-component',
-    require('./components/DiscoverComponent.vue').default
-);
-
-// Vue.component(
-//     'profile',
-//     require('./components/Profile.vue').default
+//     'search-results',
+//     require('./components/SearchResults.vue').default
 // );
 
 // Vue.component(
-//     'circle-panel',
-//     require('./components/CirclePanel.vue')
+//     'photo-presenter',
+//     require('./components/presenter/PhotoPresenter.vue').default
 // );
 
-Vue.component(
-    'post-component',
-    require('./components/PostComponent.vue').default
-);
+// Vue.component(
+//     'video-presenter',
+//     require('./components/presenter/VideoPresenter.vue').default
+// );
 
-Vue.component(
-    'post-comments',
-    require('./components/PostComments.vue').default
-);
+// Vue.component(
+//     'photo-album-presenter',
+//     require('./components/presenter/PhotoAlbumPresenter.vue').default
+// );
 
-Vue.component(
-    'timeline',
-    require('./components/Timeline.vue').default
-);
+// Vue.component(
+//     'video-album-presenter',
+//     require('./components/presenter/VideoAlbumPresenter.vue').default
+// );
+
+// Vue.component(
+//     'mixed-album-presenter',
+//     require('./components/presenter/MixedAlbumPresenter.vue').default
+// );
+
+// Vue.component(
+//     'post-menu',
+//     require('./components/PostMenu.vue').default
+// );
+
 
 // Vue.component(
 //     'passport-clients',
@@ -143,6 +115,23 @@ Vue.component(
 // Vue.component(
 //     'passport-personal-access-tokens',
 //     require('./components/passport/PersonalAccessTokens.vue').default
+// );
+
+
+
+// Vue.component(
+//     'follow-suggestions',
+//     require('./components/FollowSuggestions.vue').default
+// );
+
+// Vue.component(
+//     'circle-panel',
+//     require('./components/CirclePanel.vue')
+// );
+
+// Vue.component(
+//     'story-compose',
+//     require('./components/StoryCompose.vue').default
 // );
 
 //import 'promise-polyfill/src/polyfill';

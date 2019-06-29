@@ -2,6 +2,8 @@
 
 @section('content')
 
+@include('admin.partial.topnav')
+
 <div class="container">
   <div class="col-12 mt-5">
     <div class="card">
@@ -23,3 +25,13 @@
 </div>
 
 @endsection
+
+@push('scripts')
+<script type="text/javascript">
+$(document).ready(function() {
+  $('a#composeModal').on('click', function() {
+    swal('Not Supported', 'You cannot compose a post from the admin dashboard.', 'error');
+  });
+});
+</script>
+@endpush

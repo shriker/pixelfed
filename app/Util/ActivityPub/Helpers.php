@@ -2,15 +2,15 @@
 
 namespace App\Util\ActivityPub;
 
-use Cache, Purify, Storage, Request, Validator;
+use DB, Cache, Purify, Storage, Request, Validator;
 use App\{
-    Activity,
-    Follower,
-    Like,
-    Media,
-    Notification,
-    Profile,
-    Status
+	Activity,
+	Follower,
+	Like,
+	Media,
+	Notification,
+	Profile,
+	Status
 };
 use Zttp\Zttp;
 use Carbon\Carbon;
@@ -21,28 +21,26 @@ use App\Jobs\AvatarPipeline\CreateAvatar;
 use App\Jobs\RemoteFollowPipeline\RemoteFollowImportRecent;
 use App\Jobs\ImageOptimizePipeline\{ImageOptimize,ImageThumbnail};
 use App\Jobs\StatusPipeline\NewStatusPipeline;
-use App\Util\HttpSignatures\{GuzzleHttpSignatures, KeyStore, Context, Verifier};
-use Symfony\Bridge\PsrHttpMessage\Factory\DiactorosFactory;
 use App\Util\ActivityPub\HttpSignature;
+use Illuminate\Support\Str;
 
 class Helpers {
 
 	public static function validateObject($data)
 	{
-		// todo: undo
-		$verbs = ['Create', 'Announce', 'Like', 'Follow', 'Delete', 'Accept', 'Reject'];
+		$verbs = ['Create', 'Announce', 'Like', 'Follow', 'Delete', 'Accept', 'Reject', 'Undo', 'Tombstone'];
 
 		$valid = Validator::make($data, [
 			'type' => [
 				'required',
+				'string',
 				Rule::in($verbs)
 			],
 			'id' => 'required|string',
-			'actor' => 'required|string',
+			'actor' => 'required|string|url',
 			'object' => 'required',
 			'object.type' => 'required_if:type,Create',
-			'object.attachment' => 'required_if:type,Create',
-			'object.attributedTo' => 'required_if:type,Create',
+			'object.attributedTo' => 'required_if:type,Create|url',
 			'published' => 'required_if:type,Create|date'
 		])->passes();
 
@@ -57,30 +55,30 @@ class Helpers {
 
 		$activity = $data['object'];
 
-        $mediaTypes = ['Document', 'Image', 'Video'];
-        $mimeTypes = ['image/jpeg', 'image/png', 'video/mp4'];
+		$mimeTypes = explode(',', config('pixelfed.media_types'));
+		$mediaTypes = in_array('video/mp4', $mimeTypes) ? ['Document', 'Image', 'Video'] : ['Document', 'Image'];
 
-        if(!isset($activity['attachment']) || empty($activity['attachment'])) {
-            return false;
-        }
+		if(!isset($activity['attachment']) || empty($activity['attachment'])) {
+			return false;
+		}
 
-        $attachment = $activity['attachment'];
-        $valid = Validator::make($attachment, [
-            '*.type' => [
-            	'required',
-            	'string',
-            	Rule::in($mediaTypes)
-            ],
-            '*.url' => 'required|max:255',
-            '*.mediaType'  => [
-            	'required',
-            	'string',
-            	Rule::in($mimeTypes)
-            ],
-            '*.name' => 'nullable|string|max:255'
-        ])->passes();
+		$attachment = $activity['attachment'];
+		$valid = Validator::make($attachment, [
+			'*.type' => [
+				'required',
+				'string',
+				Rule::in($mediaTypes)
+			],
+			'*.url' => 'required|url|max:255',
+			'*.mediaType'  => [
+				'required',
+				'string',
+				Rule::in($mimeTypes)
+			],
+			'*.name' => 'nullable|string|max:255'
+		])->passes();
 
-        return $valid;
+		return $valid;
 	}
 
 	public static function normalizeAudience($data, $localOnly = true)
@@ -88,7 +86,7 @@ class Helpers {
 		if(!isset($data['to'])) {
 			return;
 		}
-		
+
 		$audience = [];
 		$audience['to'] = [];
 		$audience['cc'] = [];
@@ -133,22 +131,45 @@ class Helpers {
 	public static function validateUrl($url)
 	{
 		$localhosts = [
-	      '127.0.0.1', 'localhost', '::1'
-	    ];
+			'127.0.0.1', 'localhost', '::1'
+		];
 
-	    $valid = filter_var($url, FILTER_VALIDATE_URL, FILTER_FLAG_SCHEME_REQUIRED|FILTER_FLAG_HOST_REQUIRED);
+		if(mb_substr($url, 0, 8) !== 'https://') {
+			return false;
+		}
 
-	    if(in_array(parse_url($valid, PHP_URL_HOST), $localhosts)) {
-	    	return false;
-	    }
+		$valid = filter_var($url, FILTER_VALIDATE_URL);
 
-	    return $valid;
+		if(!$valid) {
+			return false;
+		}
+
+		$host = parse_url($valid, PHP_URL_HOST);
+
+		if(count(dns_get_record($host, DNS_A | DNS_AAAA)) == 0) {
+			return false;
+		}
+
+		if(config('costar.enabled') == true) {
+			if(
+				(config('costar.domain.block') != null && Str::contains($host, config('costar.domain.block')) == true) || 
+				(config('costar.actor.block') != null && in_array($url, config('costar.actor.block')) == true)
+			) {
+				return false;
+			}
+		}
+
+		if(in_array($host, $localhosts)) {
+			return false;
+		}
+
+		return $valid;
 	}
 
 	public static function validateLocalUrl($url)
 	{
 		$url = self::validateUrl($url);
-		if($url) {
+		if($url == true) {
 			$domain = config('pixelfed.domain.app');
 			$host = parse_url($url, PHP_URL_HOST);
 			$url = $domain === $host ? $url : false;
@@ -160,20 +181,24 @@ class Helpers {
 	public static function zttpUserAgent()
 	{
 		return [
-          'Accept'     => 'application/ld+json; profile="https://www.w3.org/ns/activitystreams"',
-          'User-Agent' => 'PixelFedBot - https://pixelfed.org',
-        ];
+			'Accept'     => 'application/ld+json; profile="https://www.w3.org/ns/activitystreams"',
+			'User-Agent' => 'PixelfedBot - https://pixelfed.org',
+		];
 	}
 
 	public static function fetchFromUrl($url)
 	{
-        $res = Zttp::withHeaders(self::zttpUserAgent())->get($url);
-        $res = json_decode($res->body(), true, 8);
-        if(json_last_error() == JSON_ERROR_NONE) {
-        	return $res;
-        } else {
-        	return false;
-        }
+		$url = self::validateUrl($url);
+		if($url == false) {
+			return;
+		}
+		$res = Zttp::withHeaders(self::zttpUserAgent())->get($url);
+		$res = json_decode($res->body(), true, 8);
+		if(json_last_error() == JSON_ERROR_NONE) {
+			return $res;
+		} else {
+			return false;
+		}
 	}
 
 	public static function fetchProfileFromUrl($url)
@@ -181,7 +206,7 @@ class Helpers {
 		return self::fetchFromUrl($url);
 	}
 
-	public static function statusFirstOrFetch($url, $replyTo = true)
+	public static function statusFirstOrFetch($url, $replyTo = false)
 	{
 		$url = self::validateUrl($url);
 		if($url == false) {
@@ -210,6 +235,65 @@ class Helpers {
 				$activity = ['object' => $res];
 			}
 
+			if(isset($res['content']) == false) {
+				abort(400, 'Invalid object');
+			}
+
+			$scope = 'private';
+			
+			$cw = isset($activity['sensitive']) ? (bool) $activity['sensitive'] : false;
+
+			if(isset($res['to']) == true) {
+				if(is_array($res['to']) && in_array('https://www.w3.org/ns/activitystreams#Public', $res['to'])) {
+					$scope = 'public';
+				}
+				if(is_string($res['to']) && 'https://www.w3.org/ns/activitystreams#Public' == $res['to']) {
+					$scope = 'public';
+				}
+			}
+
+			if(isset($res['cc']) == true) {
+				if(is_array($res['cc']) && in_array('https://www.w3.org/ns/activitystreams#Public', $res['cc'])) {
+					$scope = 'unlisted';
+				}
+				if(is_string($res['cc']) && 'https://www.w3.org/ns/activitystreams#Public' == $res['cc']) {
+					$scope = 'unlisted';
+				}
+			}
+
+			if(config('costar.enabled') == true) {
+				$blockedKeywords = config('costar.keyword.block');
+				if($blockedKeywords !== null) {
+					$keywords = config('costar.keyword.block');
+					foreach($keywords as $kw) {
+						if(Str::contains($res['content'], $kw) == true) {
+							abort(400, 'Invalid object');
+						}
+					}
+				}
+
+				$unlisted = config('costar.domain.unlisted');
+				if(in_array(parse_url($url, PHP_URL_HOST), $unlisted) == true) {
+					$unlisted = true;
+					$scope = 'unlisted';
+				} else {
+					$unlisted = false;
+				}
+
+				$cw = config('costar.domain.cw');
+				if(in_array(parse_url($url, PHP_URL_HOST), $cw) == true) {
+					$cw = true;
+				} else {
+					$cw = isset($activity['sensitive']) ? (bool) $activity['sensitive'] : false;
+				}
+			}
+
+			if(!self::validateUrl($res['id']) ||
+			   !self::validateUrl($activity['object']['attributedTo'])
+			) {
+				abort(400, 'Invalid object url');
+			}
+
 			$idDomain = parse_url($res['id'], PHP_URL_HOST);
 			$urlDomain = parse_url($url, PHP_URL_HOST);
 			$actorDomain = parse_url($activity['object']['attributedTo'], PHP_URL_HOST);
@@ -230,21 +314,32 @@ class Helpers {
 				$reply_to = null;
 			}
 			$ts = is_array($res['published']) ? $res['published'][0] : $res['published'];
-			$status = new Status;
-			$status->profile_id = $profile->id;
-			$status->url = $url;
-			$status->uri = $url;
-			$status->caption = strip_tags($res['content']);
-			$status->rendered = Purify::clean($res['content']);
-			$status->created_at = Carbon::parse($ts);
-			$status->in_reply_to_id = $reply_to;
-			$status->local = false;
-			$status->save();
+			$status = DB::transaction(function() use($profile, $res, $url, $ts, $reply_to, $cw, $scope) {
+				$status = new Status;
+				$status->profile_id = $profile->id;
+				$status->url = isset($res['url']) ? $res['url'] : $url;
+				$status->uri = isset($res['url']) ? $res['url'] : $url;
+				$status->caption = strip_tags($res['content']);
+				$status->rendered = Purify::clean($res['content']);
+				$status->created_at = Carbon::parse($ts);
+				$status->in_reply_to_id = $reply_to;
+				$status->local = false;
+				$status->is_nsfw = $cw;
+				$status->scope = $scope;
+				$status->visibility = $scope;
+				$status->save();
+				self::importNoteAttachment($res, $status);
+				return $status;
+			});
 
-			self::importNoteAttachment($res, $status);
 
 			return $status;
 		}
+	}
+
+	public static function statusFetch($url)
+	{
+		return self::statusFirstOrFetch($url);
 	}
 
 	public static function importNoteAttachment($data, Status $status)
@@ -256,8 +351,9 @@ class Helpers {
 		$user = $status->profile;
 		$monthHash = hash('sha1', date('Y').date('m'));
 		$userHash = hash('sha1', $user->id.(string) $user->created_at);
-        $storagePath = "public/m/{$monthHash}/{$userHash}";
-        $allowed = explode(',', config('pixelfed.media_types'));
+		$storagePath = "public/m/{$monthHash}/{$userHash}";
+		$allowed = explode(',', config('pixelfed.media_types'));
+
 		foreach($attachments as $media) {
 			$type = $media['mediaType'];
 			$url = $media['url'];
@@ -265,110 +361,103 @@ class Helpers {
 			if(in_array($type, $allowed) == false || $valid == false) {
 				continue;
 			}
-            $info = pathinfo($url);
+			$info = pathinfo($url);
 
-            // pleroma attachment fix
-            $url = str_replace(' ', '%20', $url);
+			// pleroma attachment fix
+			$url = str_replace(' ', '%20', $url);
 
-            $img = file_get_contents($url, false, stream_context_create(['ssl' => ["verify_peer"=>false,"verify_peer_name"=>false]]));
-            $file = '/tmp/'.str_random(16).$info['basename'];
-            file_put_contents($file, $img);
-            $fdata = new File($file);
-            $path = Storage::putFile($storagePath, $fdata, 'public');
-            $media = new Media();
-            $media->status_id = $status->id;
-            $media->profile_id = $status->profile_id;
-            $media->user_id = null;
-            $media->media_path = $path;
-            $media->size = $fdata->getSize();
-            $media->mime = $fdata->getMimeType();
-            $media->save();
+			$img = file_get_contents($url, false, stream_context_create(['ssl' => ["verify_peer"=>true,"verify_peer_name"=>true]]));
+			$file = '/tmp/pxmi-'.str_random(32);
+			file_put_contents($file, $img);
+			$fdata = new File($file);
+			$path = Storage::putFile($storagePath, $fdata, 'public');
+			$media = new Media();
+			$media->remote_media = true;
+			$media->status_id = $status->id;
+			$media->profile_id = $status->profile_id;
+			$media->user_id = null;
+			$media->media_path = $path;
+			$media->size = $fdata->getSize();
+			$media->mime = $fdata->getMimeType();
+			$media->save();
 
-            ImageThumbnail::dispatch($media);
-            ImageOptimize::dispatch($media);
-            unlink($file);
+			ImageThumbnail::dispatch($media);
+			ImageOptimize::dispatch($media);
+			unlink($file);
 		}
+		
+		$status->viewType();
 		return;
 	}
 
 	public static function profileFirstOrNew($url, $runJobs = false)
 	{
- 		$res = self::fetchProfileFromUrl($url);
- 		$domain = parse_url($res['id'], PHP_URL_HOST);
-        $username = $res['preferredUsername'];
-        $remoteUsername = "@{$username}@{$domain}";
+		$url = self::validateUrl($url);
+		if($url == false) {
+			abort(400, 'Invalid url');
+		}
+		$host = parse_url($url, PHP_URL_HOST);
+		$local = config('pixelfed.domain.app') == $host ? true : false;
+
+		if($local == true) {
+			$id = last(explode('/', $url));
+			return Profile::whereUsername($id)->firstOrFail();
+		}
+		$res = self::fetchProfileFromUrl($url);
+		if(isset($res['id']) == false) {
+			return;
+		}
+		$domain = parse_url($res['id'], PHP_URL_HOST);
+		$username = (string) Purify::clean($res['preferredUsername']);
+		if(empty($username)) {
+			return;
+		}
+		$remoteUsername = "@{$username}@{$domain}";
+
+		abort_if(!self::validateUrl($res['inbox']), 400);
+		abort_if(!self::validateUrl($res['outbox']), 400);
+		abort_if(!self::validateUrl($res['id']), 400);
 
 		$profile = Profile::whereRemoteUrl($res['id'])->first();
 		if(!$profile) {
-	        $profile = new Profile;
-	        $profile->domain = $domain;
-	        $profile->username = $remoteUsername;
-	        $profile->name = strip_tags($res['name']);
-	        $profile->bio = Purify::clean($res['summary']);
-	        $profile->sharedInbox = isset($res['endpoints']) && isset($res['endpoints']['sharedInbox']) ? $res['endpoints']['sharedInbox'] : null;
-	        $profile->inbox_url = $res['inbox'];
-	        $profile->outbox_url = $res['outbox'];
-	        $profile->remote_url = $res['id'];
-	        $profile->public_key = $res['publicKey']['publicKeyPem'];
-	        $profile->key_id = $res['publicKey']['id'];
-	        $profile->save();
-	        if($runJobs == true) {
-				RemoteFollowImportRecent::dispatch($res, $profile);
+			$profile = new Profile();
+			$profile->domain = $domain;
+			$profile->username = (string) Purify::clean($remoteUsername);
+			$profile->name = Purify::clean($res['name']) ?? 'user';
+			$profile->bio = Purify::clean($res['summary']);
+			$profile->sharedInbox = isset($res['endpoints']) && isset($res['endpoints']['sharedInbox']) ? $res['endpoints']['sharedInbox'] : null;
+			$profile->inbox_url = $res['inbox'];
+			$profile->outbox_url = $res['outbox'];
+			$profile->remote_url = $res['id'];
+			$profile->public_key = $res['publicKey']['publicKeyPem'];
+			$profile->key_id = $res['publicKey']['id'];
+			$profile->save();
+			if($runJobs == true) {
+				// RemoteFollowImportRecent::dispatch($res, $profile);
 				CreateAvatar::dispatch($profile);
-	        }
+			}
 		}
 		return $profile;
 	}
 
-    public static function sendSignedObject($senderProfile, $url, $body)
-    {
-        $payload = json_encode($body);
-        $headers = HttpSignature::sign($senderProfile, $url, $body);
+	public static function profileFetch($url)
+	{
+		return self::profileFirstOrNew($url);
+	}
 
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-        curl_setopt($ch, CURLOPT_HEADER, true);
-        $response = curl_exec($ch);
-        return;
-    }
+	public static function sendSignedObject($senderProfile, $url, $body)
+	{
+		abort_if(!self::validateUrl($url), 400);
 
-    private static function _headersToSigningString($headers) {
-    }
+		$payload = json_encode($body);
+		$headers = HttpSignature::sign($senderProfile, $url, $body);
 
-    public static function validateSignature($request, $payload = null)
-    {
-
-    }
-
-    public static function fetchPublicKey()
-    {
-        $profile = $this->profile;
-        $is_url = $this->is_url;
-        $valid = $this->validateUrl();
-        if (!$valid) {
-            throw new \Exception('Invalid URL provided');
-        }
-        if ($is_url && isset($profile->public_key) && $profile->public_key) {
-            return $profile->public_key;
-        }
-
-        try {
-            $url = $this->profile;
-            $res = Zttp::timeout(30)->withHeaders([
-              'Accept'     => 'application/ld+json; profile="https://www.w3.org/ns/activitystreams"',
-              'User-Agent' => 'PixelFedBot v0.1 - https://pixelfed.org',
-            ])->get($url);
-            $actor = json_decode($res->getBody(), true);
-        } catch (Exception $e) {
-            throw new Exception('Unable to fetch public key');
-        }
-        if($actor['publicKey']['owner'] != $profile) {
-            throw new Exception('Invalid key match');
-        }
-        $this->public_key = $actor['publicKey']['publicKeyPem'];
-        $this->key_id = $actor['publicKey']['id'];
-        return $this;
-    }
+		$ch = curl_init($url);
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+		curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+		curl_setopt($ch, CURLOPT_HEADER, true);
+		$response = curl_exec($ch);
+		return;
+	}
 }

@@ -74,12 +74,6 @@
                                 <input id="password-confirm" type="password" class="form-control" name="password_confirmation" placeholder="{{ __('Confirm Password') }}" required>
                             </div>
                         </div>
-
-                        @if(config('pixelfed.recaptcha'))
-                        <div class="row my-3">
-                            {!! Recaptcha::render() !!}
-                        </div>
-                        @endif
                         
                         <div class="form-group row">
                             <div class="col-md-12">
@@ -88,7 +82,7 @@
                                 </button>
                             </div>
                         </div>
-                        <p class="mb-0 font-weight-bold text-muted">By signing up, you agree to our <a href="#">Terms</a>, <a href="#">Data Policy</a> and <a href="#">Cookies Policy</a>.</p>
+                        <p class="mb-0 font-weight-bold text-lighter small">By signing up, you agree to our <a href="{{route('site.terms')}}" class="text-muted">Terms of Use</a> and <a href="{{route('site.privacy')}}" class="text-muted">Privacy Policy</a>.</p>
                     </form>
                 </div>
             </div>

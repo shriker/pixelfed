@@ -25,10 +25,21 @@ class AuthServiceProvider extends ServiceProvider
     {
         $this->registerPolicies();
 
-        // Passport::routes();
+        if(config('pixelfed.oauth_enabled')) {
+            Passport::routes();
+            Passport::tokensExpireIn(now()->addDays(15));
+            Passport::refreshTokensExpireIn(now()->addDays(30));
+            Passport::enableImplicitGrant();
+            
+            Passport::setDefaultScope([
+                'user:read',
+                'user:write'
+            ]);
 
-        // Passport::tokensExpireIn(now()->addDays(15));
-
-        // Passport::refreshTokensExpireIn(now()->addDays(30));
+            Passport::tokensCan([
+                'user:read' => 'Read a user’s profile info and media',
+                'user:write' => 'This scope lets an app "Change your profile information"',
+            ]);
+        }
     }
 }

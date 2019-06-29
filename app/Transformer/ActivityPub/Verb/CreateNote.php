@@ -30,6 +30,17 @@ class CreateNote extends Fractal\TransformerAbstract
 			'@context' => [
 				'https://www.w3.org/ns/activitystreams',
 				'https://w3id.org/security/v1',
+				[
+					'sc'				=> 'http://schema.org#',
+					'Hashtag' 			=> 'as:Hashtag',
+					'sensitive' 		=> 'as:sensitive',
+					'commentsEnabled' 	=> 'sc:Boolean',
+					'capabilities'		=> [
+						'announce'		=> ['@type' => '@id'],
+						'like'			=> ['@type' => '@id'],
+						'reply'			=> ['@type' => '@id']
+					]
+				]
 			],
 			'id' 					=> $status->permalink(),
 			'type' 					=> 'Create',
@@ -49,15 +60,21 @@ class CreateNote extends Fractal\TransformerAbstract
 				'to'           		=> $status->scopeToAudience('to'),
 				'cc' 				=> $status->scopeToAudience('cc'),
 				'sensitive'       	=> (bool) $status->is_nsfw,
-				'attachment'      	=> $status->media->map(function ($media) {
+				'attachment'      	=> $status->media()->orderBy('order')->get()->map(function ($media) {
 					return [
 						'type'      => $media->activityVerb(),
 						'mediaType' => $media->mime,
 						'url'       => $media->url(),
-						'name'      => null,
+						'name'      => $media->caption,
 					];
 				})->toArray(),
 				'tag' 				=> $tags,
+				'commentsEnabled'  => (bool) !$status->comments_disabled,
+				'capabilities' => [
+					'announce' => 'https://www.w3.org/ns/activitystreams#Public',
+					'like' => 'https://www.w3.org/ns/activitystreams#Public',
+					'reply' => $status->comments_disabled == true ? null : 'https://www.w3.org/ns/activitystreams#Public'
+				]
 			]
 		];
 	}

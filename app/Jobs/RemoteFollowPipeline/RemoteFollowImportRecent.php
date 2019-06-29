@@ -16,6 +16,7 @@ use Illuminate\Queue\SerializesModels;
 use Log;
 use Storage;
 use Zttp\Zttp;
+use App\Util\ActivityPub\Helpers;
 
 class RemoteFollowImportRecent implements ShouldQueue
 {
@@ -55,16 +56,17 @@ class RemoteFollowImportRecent implements ShouldQueue
      */
     public function handle()
     {
-        $outbox = $this->fetchOutbox();
+        // $outbox = $this->fetchOutbox();
     }
 
     public function fetchOutbox($url = false)
     {
-        Log::info(json_encode($url));
         $url = ($url == false) ? $this->actor['outbox'] : $url;
-
+        if(Helpers::validateUrl($url) == false) {
+            return;
+        }
         $response = Zttp::withHeaders([
-            'User-Agent' => 'PixelFedBot v0.1 - https://pixelfed.org',
+            'User-Agent' => 'PixelfedBot v0.1 - https://pixelfed.org',
         ])->get($url);
 
         $this->outbox = $response->json();
@@ -184,6 +186,11 @@ class RemoteFollowImportRecent implements ShouldQueue
                 Log::info('Invalid media, skipping. '.$mime);
                 continue;
             }
+            if (Helpers::validateUrl($url) == false) {
+                Log::info('Skipping invalid attachment URL: ' . $url);
+                continue;
+            }
+            
             $count++;
 
             if ($count === 1) {
@@ -209,7 +216,7 @@ class RemoteFollowImportRecent implements ShouldQueue
             $info = pathinfo($url);
             $url = str_replace(' ', '%20', $url);
             $img = file_get_contents($url);
-            $file = '/tmp/'.str_random(12).$info['basename'];
+            $file = '/tmp/'.str_random(64);
             file_put_contents($file, $img);
             $path = Storage::putFile($storagePath, new File($file), 'public');
 
@@ -223,6 +230,8 @@ class RemoteFollowImportRecent implements ShouldQueue
             $media->save();
 
             ImageThumbnail::dispatch($media);
+            
+            @unlink($file);
 
             return true;
         } catch (Exception $e) {

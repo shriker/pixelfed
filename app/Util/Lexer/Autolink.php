@@ -9,6 +9,8 @@
 
 namespace App\Util\Lexer;
 
+use Illuminate\Support\Str;
+
 /**
  * Twitter Autolink Class.
  *
@@ -413,7 +415,11 @@ class Autolink extends Regex
         $beginIndex = 0;
         foreach ($entities as $entity) {
             if (isset($entity['screen_name'])) {
-                $text .= StringUtils::substr($tweet, $beginIndex, $entity['indices'][0] - $beginIndex + 1);
+                if(Str::startsWith($entity['screen_name'], '@')) {
+                    $text .= StringUtils::substr($tweet, $beginIndex, $entity['indices'][0] - $beginIndex);
+                } else {
+                    $text .= StringUtils::substr($tweet, $beginIndex, $entity['indices'][0] - $beginIndex);
+                }
             } else {
                 $text .= StringUtils::substr($tweet, $beginIndex, $entity['indices'][0] - $beginIndex);
             }
@@ -702,16 +708,17 @@ class Autolink extends Regex
     {
         $attributes = [];
 
+        $screen_name = $entity['screen_name'];
         if (!empty($entity['list_slug'])) {
             // Replace the list and username
-            $linkText = $entity['screen_name'].$entity['list_slug'];
+            $linkText = Str::startsWith($screen_name, '@') ? $screen_name : '@'.$screen_name;
             $class = $this->class_list;
-            $url = $this->url_base_list.$linkText;
+            $url = $this->url_base_list.$screen_name;
         } else {
             // Replace the username
-            $linkText = $entity['screen_name'];
+            $linkText = Str::startsWith($screen_name, '@') ? $screen_name : '@'.$screen_name;
             $class = $this->class_user;
-            $url = $this->url_base_user.$linkText;
+            $url = $this->url_base_user . $screen_name;
         }
         if (!empty($class)) {
             $attributes['class'] = $class;

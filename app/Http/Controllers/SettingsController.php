@@ -4,21 +4,28 @@ namespace App\Http\Controllers;
 
 use App\AccountLog;
 use App\Following;
+use App\Report;
 use App\UserFilter;
-use Auth, DB, Cache, Purify;
+use Auth, Cookie, DB, Cache, Purify;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Settings\{
+    ExportSettings,
+    LabsSettings,
     HomeSettings,
     PrivacySettings,
+    RelationshipSettings,
     SecuritySettings
 };
 use App\Jobs\DeletePipeline\DeleteAccountPipeline;
 
 class SettingsController extends Controller
 {
-    use HomeSettings,
+    use ExportSettings,
+    LabsSettings,
+    HomeSettings,
     PrivacySettings,
+    RelationshipSettings,
     SecuritySettings;
 
     public function __construct()
@@ -66,55 +73,6 @@ class SettingsController extends Controller
         return view('settings.applications');
     }
 
-    public function dataExport()
-    {
-        return view('settings.dataexport');
-    }
-
-    public function exportFollowing()
-    {
-        $data = Cache::remember('account:export:profile:following:'.Auth::user()->profile->id, 1440, function() {
-            return Auth::user()->profile->following()->get()->map(function($i) {
-                return $i->url();
-            });
-        });
-        return response()->streamDownload(function () use($data) {
-            echo $data;
-        }, 'following.json');
-    }
-
-    public function exportFollowers()
-    {
-        $data = Cache::remember('account:export:profile:followers:'.Auth::user()->profile->id, 1440, function() {
-            return Auth::user()->profile->followers()->get()->map(function($i) {
-                return $i->url();
-            });
-        });
-        return response()->streamDownload(function () use($data) {
-            echo $data;
-        }, 'followers.json');
-    }
-
-    public function exportMuteBlockList()
-    {
-        $profile = Auth::user()->profile;
-        $exists = UserFilter::select('id')
-            ->whereUserId($profile->id)
-            ->exists();
-        if(!$exists) {
-            return redirect()->back();
-        }
-        $data = Cache::remember('account:export:profile:muteblocklist:'.Auth::user()->profile->id, 1440, function() use($profile) {
-            return json_encode([
-                'muted' => $profile->mutedProfileUrls(),
-                'blocked' => $profile->blockedProfileUrls()
-            ], JSON_PRETTY_PRINT);
-        });
-        return response()->streamDownload(function () use($data) {
-            echo $data;
-        }, 'muted-and-blocked-accounts.json');
-    }
-
     public function dataImport()
     {
         return view('settings.import.home');
@@ -144,6 +102,7 @@ class SettingsController extends Controller
         $user->save();
         $profile->save();
         Auth::logout();
+        Cache::forget('profiles:private');
         return redirect('/');
     }
 
@@ -172,8 +131,40 @@ class SettingsController extends Controller
         $profile->delete_after = $ts;
         $user->save();
         $profile->save();
+        Cache::forget('profiles:private');
         Auth::logout();
+        DeleteAccountPipeline::dispatch($user)->onQueue('high');
         return redirect('/');
+    }
+
+    public function requestFullExport(Request $request)
+    {
+        $user = Auth::user();
+        return view('settings.export.show');
+    }
+
+    public function reportsHome(Request $request)
+    {
+        $profile = Auth::user()->profile;
+        $reports = Report::whereProfileId($profile->id)->orderByDesc('created_at')->paginate(10);
+        return view('settings.reports', compact('reports'));
+    }
+
+    public function metroDarkMode(Request $request)
+    {
+        $this->validate($request, [
+            'mode' => 'required|string|in:light,dark'
+        ]);
+        
+        $mode = $request->input('mode');
+
+        if($mode == 'dark') {
+            $cookie = Cookie::make('dark-mode', true, 43800);
+        } else {
+            $cookie = Cookie::forget('dark-mode');
+        }
+
+        return response()->json([200])->cookie($cookie);
     }
 }
 
