@@ -90,7 +90,6 @@ Route::domain(config('pixelfed.domain.app'))->middleware(['validemail', 'twofact
             Route::get('notifications', 'ApiController@notifications');
             Route::get('timelines/public', 'PublicApiController@publicTimelineApi');
             Route::get('timelines/home', 'PublicApiController@homeTimelineApi');
-            // Route::get('timelines/network', 'PublicApiController@homeTimelineApi');
         });
         Route::group(['prefix' => 'v2'], function() {
             Route::get('config', 'ApiController@siteConfiguration');
@@ -106,11 +105,22 @@ Route::domain(config('pixelfed.domain.app'))->middleware(['validemail', 'twofact
             Route::post('status/compose', 'InternalApiController@composePost')->middleware('throttle:maxPostsPerHour,60')->middleware('throttle:maxPostsPerDay,1440');
             Route::get('loops', 'DiscoverController@loopsApi');
             Route::post('loops/watch', 'DiscoverController@loopWatch');
+            Route::get('discover/tag', 'DiscoverController@getHashtags');
         });
         Route::group(['prefix' => 'local'], function () {
-            Route::get('i/follow-suggestions', 'ApiController@followSuggestions');
             Route::post('status/compose', 'InternalApiController@compose')->middleware('throttle:maxPostsPerHour,60')->middleware('throttle:maxPostsPerDay,1440');
             Route::get('exp/rec', 'ApiController@userRecommendations');
+            Route::post('discover/tag/subscribe', 'HashtagFollowController@store')->middleware('throttle:maxHashtagFollowsPerHour,60')->middleware('throttle:maxHashtagFollowsPerDay,1440');;
+            Route::get('discover/tag/list', 'HashtagFollowController@getTags');
+            Route::get('profile/sponsor/{id}', 'ProfileSponsorController@get');
+            Route::get('bookmarks', 'InternalApiController@bookmarks');
+            Route::get('collection/items/{id}', 'CollectionController@getItems');
+            Route::post('collection/item', 'CollectionController@storeId');
+            Route::get('collection/{id}', 'CollectionController@get');
+            Route::post('collection/{id}', 'CollectionController@store');
+            Route::delete('collection/{id}', 'CollectionController@delete')->middleware('throttle:maxCollectionsPerHour,60')->middleware('throttle:maxCollectionsPerDay,1440')->middleware('throttle:maxCollectionsPerMonth,43800');
+            Route::post('collection/{id}/publish', 'CollectionController@publish')->middleware('throttle:maxCollectionsPerHour,60')->middleware('throttle:maxCollectionsPerDay,1440')->middleware('throttle:maxCollectionsPerMonth,43800');
+            Route::get('profile/collections/{id}', 'CollectionController@getUserCollections');
         });
     });
 
@@ -163,6 +173,10 @@ Route::domain(config('pixelfed.domain.app'))->middleware(['validemail', 'twofact
             Route::get('abusive/post', 'ReportController@abusivePostForm')->name('report.abusive.post');
             Route::get('abusive/profile', 'ReportController@abusiveProfileForm')->name('report.abusive.profile');
         });
+
+        Route::get('collections/create', 'CollectionController@create');
+
+        Route::get('me', 'ProfileController@meRedirect');
     });
 
     Route::group(['prefix' => 'account'], function () {
@@ -197,7 +211,6 @@ Route::domain(config('pixelfed.domain.app'))->middleware(['validemail', 'twofact
         Route::get('privacy/blocked-keywords', 'SettingsController@blockedKeywords')->name('settings.privacy.blocked-keywords');
         Route::post('privacy/account', 'SettingsController@privateAccountOptions')->name('settings.privacy.account');
         Route::get('reports', 'SettingsController@reportsHome')->name('settings.reports');
-        // Todo: Release in 0.7.2
         Route::group(['prefix' => 'remove', 'middleware' => 'dangerzone'], function() {
             Route::get('request/temporary', 'SettingsController@removeAccountTemporary')->name('settings.remove.temporary');
             Route::post('request/temporary', 'SettingsController@removeAccountTemporarySubmit');
@@ -258,6 +271,8 @@ Route::domain(config('pixelfed.domain.app'))->middleware(['validemail', 'twofact
         Route::get('invites/create', 'UserInviteController@create')->name('settings.invites.create');
         Route::post('invites/create', 'UserInviteController@store');
         Route::get('invites', 'UserInviteController@show')->name('settings.invites');
+        Route::get('sponsor', 'SettingsController@sponsor')->name('settings.sponsor');
+        Route::post('sponsor', 'SettingsController@sponsorStore');
     });
 
     Route::group(['prefix' => 'site'], function () {
@@ -298,7 +313,6 @@ Route::domain(config('pixelfed.domain.app'))->middleware(['validemail', 'twofact
     Route::group(['prefix' => 'timeline'], function () {
         Route::redirect('/', '/');
         Route::get('public', 'TimelineController@local')->name('timeline.public');
-        // Route::get('network', 'TimelineController@network')->name('timeline.network');
     });
 
     Route::group(['prefix' => 'users'], function () {
@@ -310,12 +324,12 @@ Route::domain(config('pixelfed.domain.app'))->middleware(['validemail', 'twofact
         Route::get('{username}/following', 'FederationController@userFollowing');
     });
 
+    Route::get('c/{collection}', 'CollectionController@show');
     Route::get('p/{username}/{id}/c/{cid}', 'CommentController@show');
     Route::get('p/{username}/{id}/c', 'CommentController@showAll');
     Route::get('p/{username}/{id}/edit', 'StatusController@edit');
     Route::post('p/{username}/{id}/edit', 'StatusController@editStore');
     Route::get('p/{username}/{id}', 'StatusController@show');
-    Route::get('{username}/saved', 'ProfileController@savedBookmarks');
     Route::get('{username}/followers', 'ProfileController@followers')->middleware('auth');
     Route::get('{username}/following', 'ProfileController@following')->middleware('auth');
     Route::get('{username}', 'ProfileController@show');

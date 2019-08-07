@@ -113,10 +113,22 @@ class PublicApiController extends Controller
         $profile = Profile::whereUsername($username)->whereNull('status')->firstOrFail();
         $status = Status::whereProfileId($profile->id)->whereCommentsDisabled(false)->findOrFail($postId);
         $this->scopeCheck($profile, $status);
+
+        if(Auth::check()) {
+            $pid = Auth::user()->profile->id;
+            $filtered = UserFilter::whereUserId($pid)
+            ->whereFilterableType('App\Profile')
+            ->whereIn('filter_type', ['mute', 'block'])
+            ->pluck('filterable_id')->toArray();
+        } else {
+            $filtered = [];
+        }
+
         if($request->filled('min_id') || $request->filled('max_id')) {
             if($request->filled('min_id')) {
                 $replies = $status->comments()
                 ->whereNull('reblog_of_id')
+                ->whereNotIn('profile_id', $filtered)
                 ->select('id', 'caption', 'is_nsfw', 'rendered', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
                 ->where('id', '>=', $request->min_id)
                 ->orderBy('id', 'desc')
@@ -125,6 +137,7 @@ class PublicApiController extends Controller
             if($request->filled('max_id')) {
                 $replies = $status->comments()
                 ->whereNull('reblog_of_id')
+                ->whereNotIn('profile_id', $filtered)
                 ->select('id', 'caption', 'is_nsfw', 'rendered', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
                 ->where('id', '<=', $request->max_id)
                 ->orderBy('id', 'desc')
@@ -133,6 +146,7 @@ class PublicApiController extends Controller
         } else {
             $replies = $status->comments()
             ->whereNull('reblog_of_id')
+            ->whereNotIn('profile_id', $filtered)
             ->select('id', 'caption', 'is_nsfw', 'rendered', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
             ->orderBy('id', 'desc')
             ->paginate($limit);
@@ -211,6 +225,10 @@ class PublicApiController extends Controller
           'limit'       => 'nullable|integer|max:20'
         ]);
 
+        if(config('instance.timeline.local.is_public') == false && !Auth::check()) {
+            abort(403, 'Authentication required.');
+        }
+
         $page = $request->input('page');
         $min = $request->input('min_id');
         $max = $request->input('max_id');
@@ -254,6 +272,7 @@ class PublicApiController extends Controller
                         'created_at',
                         'updated_at'
                       )->where('id', $dir, $id)
+                      ->with('profile', 'hashtags', 'mentions')
                       ->whereIn('type', ['photo', 'photo:album', 'video', 'video:album'])
                       ->whereLocal(true)
                       ->whereNull('uri')
@@ -282,6 +301,7 @@ class PublicApiController extends Controller
                         'created_at',
                         'updated_at'
                       )->whereIn('type', ['photo', 'photo:album', 'video', 'video:album'])
+                      ->with('profile', 'hashtags', 'mentions')
                       ->whereLocal(true)
                       ->whereNull('uri')
                       ->whereNotIn('profile_id', $filtered)
@@ -331,6 +351,8 @@ class PublicApiController extends Controller
                 ->orWhere('status', '!=', null)
                 ->pluck('id');
         });
+        
+        $private = $private->diff($following)->flatten();
 
         $filters = UserFilter::whereUserId($pid)
                   ->whereFilterableType('App\Profile')
@@ -358,6 +380,7 @@ class PublicApiController extends Controller
                         'created_at',
                         'updated_at'
                       )->whereIn('type', ['photo', 'photo:album', 'video', 'video:album'])
+                      ->with('profile', 'hashtags', 'mentions')
                       ->where('id', $dir, $id)
                       ->whereIn('profile_id', $following)
                       ->whereNotIn('profile_id', $filtered)
@@ -385,6 +408,7 @@ class PublicApiController extends Controller
                         'created_at',
                         'updated_at'
                       )->whereIn('type', ['photo', 'photo:album', 'video', 'video:album'])
+                      ->with('profile', 'hashtags', 'mentions')
                       ->whereIn('profile_id', $following)
                       ->whereNotIn('profile_id', $filtered)
                       ->whereNull('in_reply_to_id')
@@ -509,7 +533,7 @@ class PublicApiController extends Controller
         $filtered = $ids->filter(function($v) { 
             return $v != Auth::user()->profile->id;
         });
-        $relations = Profile::findOrFail($filtered->all());
+        $relations = Profile::whereNull('status')->findOrFail($filtered->all());
         $fractal = new Fractal\Resource\Collection($relations, new RelationshipTransformer());
         $res = $this->fractal->createData($fractal)->toArray();
         return response()->json($res);

@@ -125,7 +125,7 @@ class Helpers {
 	{
 		$audience = self::normalizeAudience($data);
 		$url = $profile->permalink();
-		return in_array($url, $audience);
+		return in_array($url, $audience['to']) || in_array($url, $audience['cc']);
 	}
 
 	public static function validateUrl($url)
@@ -328,7 +328,9 @@ class Helpers {
 				$status->scope = $scope;
 				$status->visibility = $scope;
 				$status->save();
-				self::importNoteAttachment($res, $status);
+				if($reply_to == null) {
+					self::importNoteAttachment($res, $status);
+				}
 				return $status;
 			});
 
@@ -361,29 +363,16 @@ class Helpers {
 			if(in_array($type, $allowed) == false || $valid == false) {
 				continue;
 			}
-			$info = pathinfo($url);
 
-			// pleroma attachment fix
-			$url = str_replace(' ', '%20', $url);
-
-			$img = file_get_contents($url, false, stream_context_create(['ssl' => ["verify_peer"=>true,"verify_peer_name"=>true]]));
-			$file = '/tmp/pxmi-'.str_random(32);
-			file_put_contents($file, $img);
-			$fdata = new File($file);
-			$path = Storage::putFile($storagePath, $fdata, 'public');
 			$media = new Media();
 			$media->remote_media = true;
 			$media->status_id = $status->id;
 			$media->profile_id = $status->profile_id;
 			$media->user_id = null;
-			$media->media_path = $path;
-			$media->size = $fdata->getSize();
-			$media->mime = $fdata->getMimeType();
+			$media->media_path = $url;
+			$media->remote_url = $url;
+			$media->mime = $type;
 			$media->save();
-
-			ImageThumbnail::dispatch($media);
-			ImageOptimize::dispatch($media);
-			unlink($file);
 		}
 		
 		$status->viewType();
@@ -401,7 +390,10 @@ class Helpers {
 
 		if($local == true) {
 			$id = last(explode('/', $url));
-			return Profile::whereUsername($id)->firstOrFail();
+			return Profile::whereNull('status')
+				->whereNull('domain')
+				->whereUsername($id)
+				->firstOrFail();
 		}
 		$res = self::fetchProfileFromUrl($url);
 		if(isset($res['id']) == false) {
